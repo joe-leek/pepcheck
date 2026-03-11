@@ -1,33 +1,78 @@
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, HttpUrl
-from .fetcher import fetch_page_content
-from .analyser import analyse_with_gpt
-from .scorer import calculate_trust_score
+"""
+PepCheck API v2.0 — main.py
 
-app = FastAPI(title="PepCheck API", version="1.0.0")
+FastAPI application with improved Trust Score algorithm.
+"""
+
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, HttpUrl
+import traceback
+
+# Import v2 modules
+from app.fetcher import fetch_page_content
+from app.analyser import analyse_content
+from app.scorer import calculate_score
+
+app = FastAPI(
+    title="PepCheck API",
+    description="Peptide vendor trust scoring API — v2.0",
+    version="2.0.0"
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 class AnalyseRequest(BaseModel):
     url: HttpUrl
 
 
+@app.get("/")
+async def root():
+    return {"status": "ok", "version": "2.0.0", "service": "PepCheck API"}
+
+
 @app.post("/analyse")
 async def analyse_vendor(request: AnalyseRequest):
-    """Analyse a vendor URL and return a trust score."""
+    url = str(request.url)
+
     try:
-        content = await fetch_page_content(str(request.url))
+        # Step 1: Fetch the page content
+        page_content = await fetch_page_content(url)
+
+        if not page_content or len(page_content.strip()) < 200:
+            raise HTTPException(
+                status_code=422,
+                detail="Could not retrieve sufficient content from this URL. The vendor's site may be blocking automated access. Try pasting the vendor's homepage URL instead."
+            )
+
+        # Step 2: Analyse content with GPT-4 using v2 prompt
+        analysis_result = await analyse_content(page_content, url)
+
+        # Step 3: Calculate the Trust Score
+        score_result = calculate_score(analysis_result)
+
+        # Add the URL to the response
+        score_result["url"] = url
+
+        return score_result
+
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to fetch page: {str(e)}")
-    
-    if not content:
-        raise HTTPException(status_code=500, detail="Failed to fetch the page content.")
-    
-    try:
-        signals = await analyse_with_gpt(content)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to analyse page: {str(e)}")
-    
-    result = calculate_trust_score(signals)
-    result["url"] = str(request.url)
-    
-    return result
+        print(f"Error analysing {url}: {traceback.format_exc()}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Analysis failed: {str(e)}"
+        )
+
+
+@app.get("/health")
+async def health_check():
+    return {"status": "healthy", "version": "2.0.0"}
