@@ -2,326 +2,463 @@ import React from 'react';
 import {
   View,
   Text,
-  ScrollView,
   StyleSheet,
+  ScrollView,
   TouchableOpacity,
 } from 'react-native';
-import { AnalysisResult, TIER_COLORS, TierType, DISCLAIMER } from '../types';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { AnalysisResult, COLORS, getTrustColor, getRiskColor, getRiskIcon, RiskLevel } from '../types';
 
 interface ComparisonScreenProps {
   results: { vendorName: string; result: AnalysisResult }[];
+  peptideName: string;
   onBack: () => void;
 }
 
-// Define all signal keys we want to compare
-const SIGNAL_KEYS = {
-  positive: [
-    { key: 'coa_batch_specific', label: 'Batch-Specific COA' },
-    { key: 'coa_hplc', label: 'HPLC Data' },
-    { key: 'coa_ms', label: 'Mass Spec Data' },
-    { key: 'coa_third_party_accredited', label: 'Third-Party Lab' },
-    { key: 'purity_99_verified', label: 'Purity ≥99% Verified' },
-    { key: 'cas_number', label: 'CAS Number' },
-    { key: 'molecular_info', label: 'Molecular Info' },
-    { key: 'storage_instructions', label: 'Storage Instructions' },
-    { key: 'physical_address', label: 'Physical Address' },
-    { key: 'returns_policy', label: 'Returns Policy' },
-  ],
-  negative: [
-    { key: 'claims_therapeutic', label: 'Therapeutic Claims' },
-    { key: 'sells_accessories', label: 'Sells Accessories' },
-    { key: 'no_ruo_disclaimer', label: 'No RUO Disclaimer' },
-    { key: 'no_coa_or_generic', label: 'No Batch COA' },
-    { key: 'coa_in_house', label: 'In-House Lab Only' },
-    { key: 'purity_unverified', label: 'Purity Unverified' },
-    { key: 'no_contact_address', label: 'No Contact Info' },
-    { key: 'price_unrealistic', label: 'Unrealistic Price' },
-  ],
+// All possible signals for comparison
+const POSITIVE_SIGNAL_KEYS = [
+  'coa_batch_specific',
+  'coa_hplc',
+  'coa_ms',
+  'coa_third_party_accredited',
+  'purity_99_verified',
+  'cas_number',
+  'molecular_info',
+  'storage_instructions',
+  'physical_address',
+  'returns_policy',
+];
+
+const NEGATIVE_SIGNAL_KEYS = [
+  'claims_therapeutic',
+  'sells_accessories',
+  'no_ruo_disclaimer',
+  'no_coa_or_generic',
+  'coa_in_house',
+  'purity_unverified',
+  'no_contact_address',
+  'price_unrealistic',
+];
+
+const SIGNAL_LABELS: Record<string, string> = {
+  coa_batch_specific: 'Batch COA',
+  coa_hplc: 'HPLC Data',
+  coa_ms: 'Mass Spec',
+  coa_third_party_accredited: '3rd Party Lab',
+  purity_99_verified: 'Purity 99%+',
+  cas_number: 'CAS Number',
+  molecular_info: 'Molecular Info',
+  storage_instructions: 'Storage Info',
+  physical_address: 'Physical Address',
+  returns_policy: 'Returns Policy',
+  claims_therapeutic: 'Therapeutic Claims',
+  sells_accessories: 'Sells Accessories',
+  no_ruo_disclaimer: 'No RUO Disclaimer',
+  no_coa_or_generic: 'No/Generic COA',
+  coa_in_house: 'In-house COA Only',
+  purity_unverified: 'Unverified Purity',
+  no_contact_address: 'No Contact Info',
+  price_unrealistic: 'Unrealistic Price',
 };
 
-export default function ComparisonScreen({ results, onBack }: ComparisonScreenProps) {
-  // Helper to check if a vendor has a specific signal
-  const hasSignal = (result: AnalysisResult, signalLabel: string, isNegative: boolean): boolean | null => {
-    const signals = isNegative ? result.signals.negative : result.signals.positive;
-    // Check if any signal label contains the key phrase
-    const found = signals.some(s => 
-      s.label.toLowerCase().includes(signalLabel.toLowerCase().split(' ')[0])
-    );
-    return found;
+// Risk level ranking for tie-breaking
+const RISK_RANK: Record<RiskLevel, number> = {
+  'Low': 1,
+  'Moderate': 2,
+  'High': 3,
+};
+
+export default function ComparisonScreen({ results, peptideName, onBack }: ComparisonScreenProps) {
+  // Determine the safer choice
+  const getSaferChoice = (): { vendorName: string; reason: string } | null => {
+    if (results.length < 2) return null;
+
+    // Sort by trust_score descending, then by risk_level ascending
+    const sorted = [...results].sort((a, b) => {
+      if (a.result.trust_score !== b.result.trust_score) {
+        return b.result.trust_score - a.result.trust_score; // Higher score first
+      }
+      // Tie-breaker: lower risk level wins
+      return RISK_RANK[a.result.risk_level] - RISK_RANK[b.result.risk_level];
+    });
+
+    const winner = sorted[0];
+    const runnerUp = sorted[1];
+
+    // Check if there's a clear winner
+    if (winner.result.trust_score === runnerUp.result.trust_score &&
+        winner.result.risk_level === runnerUp.result.risk_level) {
+      return null; // Tie
+    }
+
+    let reason = '';
+    if (winner.result.trust_score > runnerUp.result.trust_score) {
+      reason = `Higher trust score (${winner.result.trust_score} vs ${runnerUp.result.trust_score})`;
+    } else {
+      reason = `Lower risk level with same score`;
+    }
+
+    return { vendorName: winner.vendorName, reason };
   };
 
-  // Get signal status for display
-  const getSignalDisplay = (result: AnalysisResult, signalKey: { key: string; label: string }, isNegative: boolean) => {
-    const signals = isNegative ? result.signals.negative : result.signals.positive;
-    const found = signals.some(s => 
-      s.label.toLowerCase().includes(signalKey.label.toLowerCase().split(' ')[0]) ||
-      s.label.toLowerCase().includes(signalKey.label.toLowerCase().split('-')[0])
-    );
+  const saferChoice = getSaferChoice();
+
+  // Get signal status for a result
+  const getSignalStatus = (result: AnalysisResult, key: string, isPositive: boolean) => {
+    const signals = isPositive ? result.signals.positive : result.signals.negative;
+    const signal = signals.find(s => s.key === key);
     
-    if (isNegative) {
-      // For negative signals: ✗ means they HAVE the bad thing, ✓ means they don't
-      return found ? { icon: '✗', color: '#ef4444' } : { icon: '✓', color: '#22c55e' };
+    if (isPositive) {
+      return signal && signal.points > 0;
     } else {
-      // For positive signals: ✓ means they have it, ✗ means they don't
-      return found ? { icon: '✓', color: '#22c55e' } : { icon: '✗', color: '#ef4444' };
+      return signal && signal.points < 0;
     }
   };
 
-  const columnWidth = results.length === 2 ? 120 : 100;
+  // Get signal points for a result
+  const getSignalPoints = (result: AnalysisResult, key: string, isPositive: boolean) => {
+    const signals = isPositive ? result.signals.positive : result.signals.negative;
+    const signal = signals.find(s => s.key === key);
+    return signal?.points || 0;
+  };
 
   return (
-    <View style={styles.container}>
-      {/* Header with back button */}
+    <SafeAreaView style={styles.container}>
+      {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={onBack} style={styles.backButton}>
-          <Text style={styles.backText}>← Back</Text>
+          <Text style={styles.backText}>←</Text>
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Compare Vendors</Text>
+        <View style={styles.headerCenter}>
+          <Text style={styles.headerTitle}>Comparing {peptideName}</Text>
+          <Text style={styles.headerSubtitle}>{results.length} vendors</Text>
+        </View>
+        <View style={styles.headerSpacer} />
       </View>
 
-      <ScrollView style={styles.scrollView}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={true}>
-          <View style={styles.table}>
-            {/* Vendor Names Row */}
-            <View style={styles.tableRow}>
-              <View style={styles.labelCell}>
-                <Text style={styles.labelText}>Vendor</Text>
-              </View>
-              {results.map((item, idx) => (
-                <View key={idx} style={[styles.valueCell, { width: columnWidth }]}>
-                  <Text style={styles.vendorName} numberOfLines={2}>
-                    {item.vendorName}
+      <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
+        {/* Score Summary Cards */}
+        <View style={styles.summaryRow}>
+          {results.map(({ vendorName, result }) => {
+            const trustColor = getTrustColor(result.trust_score);
+            const riskColor = getRiskColor(result.risk_level);
+            const isWinner = saferChoice?.vendorName === vendorName;
+
+            return (
+              <View 
+                key={vendorName} 
+                style={[styles.summaryCard, isWinner && styles.summaryCardWinner]}
+              >
+                {isWinner && (
+                  <View style={styles.winnerBadge}>
+                    <Text style={styles.winnerText}>SAFER</Text>
+                  </View>
+                )}
+                <Text style={styles.vendorName} numberOfLines={1}>{vendorName}</Text>
+                <Text style={[styles.summaryScore, { color: trustColor }]}>
+                  {result.trust_score}
+                </Text>
+                <View style={[styles.riskPill, { backgroundColor: riskColor + '20' }]}>
+                  <Text style={[styles.riskPillText, { color: riskColor }]}>
+                    {getRiskIcon(result.risk_level)} {result.risk_level}
                   </Text>
                 </View>
+              </View>
+            );
+          })}
+        </View>
+
+        {/* Safer Choice Recommendation */}
+        {saferChoice && (
+          <View style={styles.recommendationBox}>
+            <Text style={styles.recommendationIcon}>✅</Text>
+            <View style={styles.recommendationContent}>
+              <Text style={styles.recommendationTitle}>
+                {saferChoice.vendorName} is the safer choice
+              </Text>
+              <Text style={styles.recommendationReason}>
+                {saferChoice.reason}
+              </Text>
+            </View>
+          </View>
+        )}
+
+        {/* Signal Comparison Table */}
+        <View style={styles.tableSection}>
+          <Text style={styles.tableSectionTitle}>POSITIVE SIGNALS</Text>
+          <View style={styles.table}>
+            <View style={styles.tableHeader}>
+              <Text style={styles.tableHeaderLabel}>Signal</Text>
+              {results.map(({ vendorName }) => (
+                <Text key={vendorName} style={styles.tableHeaderVendor} numberOfLines={1}>
+                  {vendorName}
+                </Text>
               ))}
             </View>
+            {POSITIVE_SIGNAL_KEYS.map(key => {
+              const hasAny = results.some(r => getSignalStatus(r.result, key, true));
+              if (!hasAny) return null;
 
-            {/* Trust Score Row */}
-            <View style={styles.tableRow}>
-              <View style={styles.labelCell}>
-                <Text style={styles.labelText}>Trust Score</Text>
-              </View>
-              {results.map((item, idx) => {
-                const tierColor = TIER_COLORS[item.result.tier as TierType] || '#64748b';
-                return (
-                  <View key={idx} style={[styles.valueCell, { width: columnWidth }]}>
-                    <Text style={[styles.scoreText, { color: tierColor }]}>
-                      {item.result.trust_score}
-                    </Text>
-                  </View>
-                );
-              })}
-            </View>
-
-            {/* Tier Row */}
-            <View style={styles.tableRow}>
-              <View style={styles.labelCell}>
-                <Text style={styles.labelText}>Tier</Text>
-              </View>
-              {results.map((item, idx) => {
-                const tierColor = TIER_COLORS[item.result.tier as TierType] || '#64748b';
-                return (
-                  <View key={idx} style={[styles.valueCell, { width: columnWidth }]}>
-                    <View style={[styles.tierBadgeSmall, { backgroundColor: tierColor }]}>
-                      <Text style={styles.tierTextSmall}>{item.result.tier}</Text>
-                    </View>
-                  </View>
-                );
-              })}
-            </View>
-
-            {/* Section: Positive Signals */}
-            <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>POSITIVE SIGNALS</Text>
-            </View>
-
-            {SIGNAL_KEYS.positive.map((signalKey) => (
-              <View key={signalKey.key} style={styles.tableRow}>
-                <View style={styles.labelCell}>
-                  <Text style={styles.labelText}>{signalKey.label}</Text>
+              return (
+                <View key={key} style={styles.tableRow}>
+                  <Text style={styles.tableLabel}>{SIGNAL_LABELS[key]}</Text>
+                  {results.map(({ vendorName, result }) => {
+                    const hasSignal = getSignalStatus(result, key, true);
+                    const points = getSignalPoints(result, key, true);
+                    return (
+                      <View key={vendorName} style={styles.tableCell}>
+                        {hasSignal ? (
+                          <View style={styles.cellContent}>
+                            <Text style={styles.cellCheck}>✓</Text>
+                            <Text style={styles.cellPoints}>+{points}</Text>
+                          </View>
+                        ) : (
+                          <Text style={styles.cellMissing}>—</Text>
+                        )}
+                      </View>
+                    );
+                  })}
                 </View>
-                {results.map((item, idx) => {
-                  const display = getSignalDisplay(item.result, signalKey, false);
-                  return (
-                    <View key={idx} style={[styles.valueCell, { width: columnWidth }]}>
-                      <Text style={[styles.signalIcon, { color: display.color }]}>
-                        {display.icon}
-                      </Text>
-                    </View>
-                  );
-                })}
-              </View>
-            ))}
-
-            {/* Section: Negative Signals */}
-            <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>RED FLAGS</Text>
-            </View>
-
-            {SIGNAL_KEYS.negative.map((signalKey) => (
-              <View key={signalKey.key} style={styles.tableRow}>
-                <View style={styles.labelCell}>
-                  <Text style={styles.labelText}>{signalKey.label}</Text>
-                </View>
-                {results.map((item, idx) => {
-                  const display = getSignalDisplay(item.result, signalKey, true);
-                  return (
-                    <View key={idx} style={[styles.valueCell, { width: columnWidth }]}>
-                      <Text style={[styles.signalIcon, { color: display.color }]}>
-                        {display.icon}
-                      </Text>
-                    </View>
-                  );
-                })}
-              </View>
-            ))}
-          </View>
-        </ScrollView>
-
-        {/* Legend */}
-        <View style={styles.legend}>
-          <Text style={styles.legendTitle}>Legend:</Text>
-          <View style={styles.legendRow}>
-            <Text style={[styles.legendIcon, { color: '#22c55e' }]}>✓</Text>
-            <Text style={styles.legendText}>Good (has positive / no red flag)</Text>
-          </View>
-          <View style={styles.legendRow}>
-            <Text style={[styles.legendIcon, { color: '#ef4444' }]}>✗</Text>
-            <Text style={styles.legendText}>Bad (missing positive / has red flag)</Text>
+              );
+            })}
           </View>
         </View>
 
-        {/* Disclaimer */}
-        <Text style={styles.disclaimer}>{DISCLAIMER}</Text>
+        <View style={styles.tableSection}>
+          <Text style={[styles.tableSectionTitle, { color: COLORS.trustLow }]}>RED FLAGS</Text>
+          <View style={styles.table}>
+            {NEGATIVE_SIGNAL_KEYS.map(key => {
+              const hasAny = results.some(r => getSignalStatus(r.result, key, false));
+              if (!hasAny) return null;
+
+              return (
+                <View key={key} style={styles.tableRow}>
+                  <Text style={styles.tableLabel}>{SIGNAL_LABELS[key]}</Text>
+                  {results.map(({ vendorName, result }) => {
+                    const hasSignal = getSignalStatus(result, key, false);
+                    const points = getSignalPoints(result, key, false);
+                    return (
+                      <View key={vendorName} style={styles.tableCell}>
+                        {hasSignal ? (
+                          <View style={styles.cellContent}>
+                            <Text style={styles.cellWarning}>⚠</Text>
+                            <Text style={[styles.cellPoints, { color: COLORS.trustLow }]}>
+                              {points}
+                            </Text>
+                          </View>
+                        ) : (
+                          <Text style={styles.cellGood}>✓</Text>
+                        )}
+                      </View>
+                    );
+                  })}
+                </View>
+              );
+            })}
+          </View>
+        </View>
       </ScrollView>
-    </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0f172a',
+    backgroundColor: COLORS.bgPrimary,
   },
   header: {
-    paddingTop: 50,
-    paddingHorizontal: 16,
-    paddingBottom: 16,
-    backgroundColor: '#0f172a',
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
   },
   backButton: {
-    paddingVertical: 8,
-    paddingRight: 16,
+    padding: 8,
+    marginLeft: -8,
   },
   backText: {
-    color: '#3b82f6',
-    fontSize: 16,
-    fontWeight: '600',
+    fontSize: 24,
+    color: COLORS.textPrimary,
+  },
+  headerCenter: {
+    alignItems: 'center',
   },
   headerTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#e2e8f0',
+    fontSize: 18,
+    fontWeight: '600',
+    color: COLORS.textPrimary,
+  },
+  headerSubtitle: {
+    fontSize: 12,
+    color: COLORS.textSecondary,
+    marginTop: 2,
+  },
+  headerSpacer: {
+    width: 40,
   },
   scrollView: {
     flex: 1,
   },
-  table: {
-    padding: 16,
+  scrollContent: {
+    padding: 20,
+    paddingBottom: 40,
   },
-  tableRow: {
+  summaryRow: {
     flexDirection: 'row',
-    borderBottomWidth: 1,
-    borderBottomColor: '#334155',
+    gap: 12,
+    marginBottom: 20,
   },
-  labelCell: {
-    width: 140,
-    paddingVertical: 12,
-    paddingRight: 8,
-    justifyContent: 'center',
-  },
-  labelText: {
-    fontSize: 13,
-    color: '#94a3b8',
-    fontWeight: '500',
-  },
-  valueCell: {
-    paddingVertical: 12,
-    paddingHorizontal: 8,
+  summaryCard: {
+    flex: 1,
+    backgroundColor: COLORS.bgSecondary,
+    borderRadius: 16,
+    padding: 16,
     alignItems: 'center',
-    justifyContent: 'center',
+    position: 'relative',
   },
-  vendorName: {
-    fontSize: 12,
-    color: '#e2e8f0',
-    fontWeight: '600',
-    textAlign: 'center',
+  summaryCardWinner: {
+    borderWidth: 2,
+    borderColor: COLORS.trustHigh,
   },
-  scoreText: {
-    fontSize: 24,
-    fontWeight: 'bold',
-  },
-  tierBadgeSmall: {
-    paddingHorizontal: 8,
+  winnerBadge: {
+    position: 'absolute',
+    top: -10,
+    backgroundColor: COLORS.trustHigh,
+    paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 8,
   },
-  tierTextSmall: {
-    color: '#ffffff',
+  winnerText: {
     fontSize: 10,
-    fontWeight: '600',
-  },
-  signalIcon: {
-    fontSize: 20,
-    fontWeight: 'bold',
-  },
-  sectionHeader: {
-    paddingVertical: 16,
-    paddingTop: 24,
-    borderBottomWidth: 2,
-    borderBottomColor: '#475569',
-  },
-  sectionTitle: {
-    fontSize: 12,
     fontWeight: '700',
-    color: '#64748b',
+    color: COLORS.bgPrimary,
     letterSpacing: 1,
   },
-  legend: {
-    padding: 16,
-    backgroundColor: '#1e293b',
-    margin: 16,
-    borderRadius: 12,
-  },
-  legendTitle: {
+  vendorName: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#e2e8f0',
-    marginBottom: 12,
+    color: COLORS.textPrimary,
+    marginBottom: 8,
+    marginTop: 4,
   },
-  legendRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  summaryScore: {
+    fontSize: 36,
+    fontWeight: 'bold',
+    fontVariant: ['tabular-nums'],
     marginBottom: 8,
   },
-  legendIcon: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    marginRight: 12,
-    width: 20,
+  riskPill: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
   },
-  legendText: {
-    fontSize: 13,
-    color: '#94a3b8',
+  riskPillText: {
+    fontSize: 12,
+    fontWeight: '600',
   },
-  disclaimer: {
-    fontSize: 11,
-    color: '#64748b',
-    textAlign: 'center',
-    lineHeight: 16,
+  recommendationBox: {
+    flexDirection: 'row',
+    backgroundColor: COLORS.trustHigh + '15',
+    borderRadius: 12,
     padding: 16,
-    marginBottom: 40,
+    marginBottom: 24,
+    gap: 12,
+    borderWidth: 1,
+    borderColor: COLORS.trustHigh + '30',
+  },
+  recommendationIcon: {
+    fontSize: 24,
+  },
+  recommendationContent: {
+    flex: 1,
+  },
+  recommendationTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: COLORS.trustHigh,
+    marginBottom: 4,
+  },
+  recommendationReason: {
+    fontSize: 13,
+    color: COLORS.textSecondary,
+  },
+  tableSection: {
+    marginBottom: 24,
+  },
+  tableSectionTitle: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: COLORS.textSecondary,
+    letterSpacing: 1,
+    marginBottom: 12,
+  },
+  table: {
+    backgroundColor: COLORS.bgSecondary,
+    borderRadius: 12,
+    overflow: 'hidden',
+  },
+  tableHeader: {
+    flexDirection: 'row',
+    backgroundColor: COLORS.bgTertiary,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+  },
+  tableHeaderLabel: {
+    flex: 1.5,
+    fontSize: 12,
+    fontWeight: '600',
+    color: COLORS.textSecondary,
+  },
+  tableHeaderVendor: {
+    flex: 1,
+    fontSize: 11,
+    fontWeight: '600',
+    color: COLORS.textSecondary,
+    textAlign: 'center',
+  },
+  tableRow: {
+    flexDirection: 'row',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderTopWidth: 1,
+    borderTopColor: COLORS.surface,
+    alignItems: 'center',
+  },
+  tableLabel: {
+    flex: 1.5,
+    fontSize: 13,
+    color: COLORS.textPrimary,
+  },
+  tableCell: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  cellContent: {
+    alignItems: 'center',
+  },
+  cellCheck: {
+    fontSize: 16,
+    color: COLORS.trustHigh,
+    marginBottom: 2,
+  },
+  cellWarning: {
+    fontSize: 14,
+    color: COLORS.trustLow,
+    marginBottom: 2,
+  },
+  cellPoints: {
+    fontSize: 10,
+    color: COLORS.trustHigh,
+    fontWeight: '600',
+  },
+  cellMissing: {
+    fontSize: 14,
+    color: COLORS.textTertiary,
+  },
+  cellGood: {
+    fontSize: 14,
+    color: COLORS.trustHigh,
   },
 });
