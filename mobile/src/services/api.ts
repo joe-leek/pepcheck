@@ -29,7 +29,9 @@ export async function analyseVendor(url: string): Promise<AnalysisResult> {
       domain: new URL(url).hostname,
       trust_score: result.trust_score,
       tier: result.tier,
+      tier_description: result.tier_description,
       analysed_at: new Date().toISOString(),
+      fullResult: result,
     };
     
     const existing = JSON.parse(await AsyncStorage.getItem('pepcheck_history') || '[]');

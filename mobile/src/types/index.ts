@@ -3,6 +3,7 @@
 export interface Signal {
   label: string;
   points: number;
+  evidence?: string;
 }
 
 export interface SignalBreakdown {
@@ -21,6 +22,7 @@ export interface AnalysisResult {
   trust_score: number;
   tier: string;
   tier_colour: string;
+  tier_description?: string;
   signals: SignalBreakdown;
   raw_score_breakdown: RawScoreBreakdown;
   disclaimer: string;
@@ -32,7 +34,10 @@ export interface HistoryItem {
   domain: string;
   trust_score: number;
   tier: string;
+  tier_description?: string;
   analysed_at: string;
+  // Full result for detail view
+  fullResult?: AnalysisResult;
 }
 
 export type TierType = 'Verified' | 'Credible' | 'Caution' | 'Unverified' | 'High Risk';

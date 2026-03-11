@@ -10,13 +10,15 @@
       }
     },
     "production": {
-      "distribution": "store"
+      "distribution": "store",
+      "autoIncrement": true
     }
   },
   "submit": {
     "production": {
       "ios": {
-        "appleId": "joe.leek23@gmail.com"
+        "appleId": "joe.leek23@gmail.com",
+        "ascAppId": "6760372679"
       }
     }
   }

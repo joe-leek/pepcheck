@@ -8,56 +8,119 @@ import { Text } from 'react-native';
 import AnalyseScreen from './src/screens/AnalyseScreen';
 import ResultsScreen from './src/screens/ResultsScreen';
 import HistoryScreen from './src/screens/HistoryScreen';
+import ScoreDetailScreen from './src/screens/ScoreDetailScreen';
+import ComparisonScreen from './src/screens/ComparisonScreen';
 import { AnalysisResult, HistoryItem } from './src/types';
 
 const Tab = createBottomTabNavigator();
 
+type ScreenState = 
+  | { type: 'tabs' }
+  | { type: 'results'; result: AnalysisResult }
+  | { type: 'detail'; result: AnalysisResult; vendorName: string }
+  | { type: 'comparison'; items: { vendorName: string; result: AnalysisResult }[] };
+
 export default function App() {
-  const [currentResult, setCurrentResult] = useState<AnalysisResult | null>(null);
-  const [activeTab, setActiveTab] = useState<'analyse' | 'results' | 'history'>('analyse');
+  const [screenState, setScreenState] = useState<ScreenState>({ type: 'tabs' });
 
   const handleAnalysisComplete = (result: AnalysisResult) => {
-    setCurrentResult(result);
-    setActiveTab('results');
+    setScreenState({ type: 'results', result });
   };
 
   const handleCheckAnother = () => {
-    setCurrentResult(null);
-    setActiveTab('analyse');
+    setScreenState({ type: 'tabs' });
   };
 
   const handleHistorySelect = (item: HistoryItem) => {
-    // For history items, we create a partial result for display
-    // In a real app, you'd store the full result
-    setCurrentResult({
-      url: item.url,
-      trust_score: item.trust_score,
-      tier: item.tier,
-      tier_colour: '',
-      signals: { positive: [], negative: [] },
-      raw_score_breakdown: {
-        positive_total: 0,
-        negative_total: 0,
-        final_score: item.trust_score,
-      },
-      disclaimer: '',
-    });
-    setActiveTab('results');
+    // If we have the full result, show the detail screen
+    if (item.fullResult) {
+      setScreenState({
+        type: 'detail',
+        result: item.fullResult,
+        vendorName: item.domain,
+      });
+    } else {
+      // Fallback for old history items without full result
+      const partialResult: AnalysisResult = {
+        url: item.url,
+        trust_score: item.trust_score,
+        tier: item.tier,
+        tier_colour: '',
+        tier_description: item.tier_description,
+        signals: { positive: [], negative: [] },
+        raw_score_breakdown: {
+          positive_total: 0,
+          negative_total: 0,
+          final_score: item.trust_score,
+        },
+        disclaimer: '',
+      };
+      setScreenState({
+        type: 'detail',
+        result: partialResult,
+        vendorName: item.domain,
+      });
+    }
   };
 
-  // Show Results screen when we have a result
-  if (activeTab === 'results' && currentResult) {
+  const handleCompare = (items: HistoryItem[]) => {
+    const comparisonItems = items
+      .filter(item => item.fullResult)
+      .map(item => ({
+        vendorName: item.domain,
+        result: item.fullResult!,
+      }));
+    
+    if (comparisonItems.length >= 2) {
+      setScreenState({ type: 'comparison', items: comparisonItems });
+    }
+  };
+
+  const handleBack = () => {
+    setScreenState({ type: 'tabs' });
+  };
+
+  // Show Results screen when we have a new analysis result
+  if (screenState.type === 'results') {
     return (
       <SafeAreaProvider>
         <StatusBar style="light" />
         <ResultsScreen 
-          result={currentResult} 
+          result={screenState.result} 
           onCheckAnother={handleCheckAnother}
         />
       </SafeAreaProvider>
     );
   }
 
+  // Show Score Detail screen for history item deep dive
+  if (screenState.type === 'detail') {
+    return (
+      <SafeAreaProvider>
+        <StatusBar style="light" />
+        <ScoreDetailScreen
+          result={screenState.result}
+          vendorName={screenState.vendorName}
+          onBack={handleBack}
+        />
+      </SafeAreaProvider>
+    );
+  }
+
+  // Show Comparison screen
+  if (screenState.type === 'comparison') {
+    return (
+      <SafeAreaProvider>
+        <StatusBar style="light" />
+        <ComparisonScreen
+          results={screenState.items}
+          onBack={handleBack}
+        />
+      </SafeAreaProvider>
+    );
+  }
+
+  // Default: Show tabs
   return (
     <SafeAreaProvider>
       <NavigationContainer>
@@ -91,7 +154,12 @@ export default function App() {
               tabBarIcon: ({ color }) => <Text style={{ color, fontSize: 20 }}>📋</Text>,
             }}
           >
-            {() => <HistoryScreen onSelectItem={handleHistorySelect} />}
+            {() => (
+              <HistoryScreen 
+                onSelectItem={handleHistorySelect}
+                onCompare={handleCompare}
+              />
+            )}
           </Tab.Screen>
         </Tab.Navigator>
       </NavigationContainer>
