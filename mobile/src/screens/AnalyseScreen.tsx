@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -6,12 +6,14 @@ import {
   TouchableOpacity,
   StyleSheet,
   ActivityIndicator,
-  KeyboardAvoidingView,
-  Platform,
+  Keyboard,
+  Alert,
   ScrollView,
 } from 'react-native';
-import { analyseVendor } from '../services/api';
-import { AnalysisResult, DISCLAIMER } from '../types';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { AnalysisResult, HistoryItem, COLORS, getRiskColor, getRiskIcon } from '../types';
+import { analyseVendor, saveToHistory } from '../services/api';
 
 interface AnalyseScreenProps {
   onAnalysisComplete: (result: AnalysisResult) => void;
@@ -20,206 +22,329 @@ interface AnalyseScreenProps {
 export default function AnalyseScreen({ onAnalysisComplete }: AnalyseScreenProps) {
   const [url, setUrl] = useState('');
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [recentItems, setRecentItems] = useState<HistoryItem[]>([]);
+
+  useEffect(() => {
+    loadRecentItems();
+  }, []);
+
+  const loadRecentItems = async () => {
+    try {
+      const stored = await AsyncStorage.getItem('pepcheck_history');
+      if (stored) {
+        const items: HistoryItem[] = JSON.parse(stored);
+        setRecentItems(items.slice(0, 3));
+      }
+    } catch (error) {
+      console.error('Failed to load recent items:', error);
+    }
+  };
 
   const handleAnalyse = async () => {
     if (!url.trim()) {
-      setError('Please enter a URL');
+      Alert.alert('URL Required', 'Please enter a vendor product URL to analyse.');
       return;
     }
 
     // Basic URL validation
-    if (!url.startsWith('http://') && !url.startsWith('https://')) {
-      setError('Please enter a valid URL starting with http:// or https://');
-      return;
+    let processedUrl = url.trim();
+    if (!processedUrl.startsWith('http://') && !processedUrl.startsWith('https://')) {
+      processedUrl = 'https://' + processedUrl;
     }
 
+    Keyboard.dismiss();
     setLoading(true);
-    setError(null);
 
     try {
-      const result = await analyseVendor(url.trim());
+      const result = await analyseVendor(processedUrl);
+      await saveToHistory(result);
+      setUrl('');
       onAnalysisComplete(result);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Analysis failed. Please try again.');
+    } catch (error: any) {
+      Alert.alert(
+        'Analysis Failed',
+        error.message || 'Could not analyse this URL. Please check the URL and try again.'
+      );
     } finally {
       setLoading(false);
     }
   };
 
+  const handleRecentTap = (item: HistoryItem) => {
+    if (item.fullResult) {
+      onAnalysisComplete(item.fullResult);
+    }
+  };
+
   return (
-    <KeyboardAvoidingView 
-      style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-    >
+    <SafeAreaView style={styles.container}>
       <ScrollView 
+        style={styles.scrollView}
         contentContainerStyle={styles.scrollContent}
         keyboardShouldPersistTaps="handled"
       >
         {/* Header */}
         <View style={styles.header}>
-          <Text style={styles.title}>PepCheck</Text>
-          <Text style={styles.subtitle}>Peptide Vendor Trust Analyzer</Text>
+          <Text style={styles.logo}>PepCheck</Text>
+          <Text style={styles.version}>v3.0</Text>
         </View>
 
-        {/* Input Section */}
-        <View style={styles.inputSection}>
-          <Text style={styles.label}>Vendor Product URL</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="Paste vendor URL..."
-            placeholderTextColor="#9ca3af"
-            value={url}
-            onChangeText={(text) => {
-              setUrl(text);
-              setError(null);
-            }}
-            autoCapitalize="none"
-            autoCorrect={false}
-            keyboardType="url"
-            editable={!loading}
-          />
-
-          {/* Error Message */}
-          {error && (
-            <View style={styles.errorContainer}>
-              <Text style={styles.errorText}>{error}</Text>
-            </View>
-          )}
-
-          {/* Analyse Button */}
-          <TouchableOpacity
-            style={[styles.button, loading && styles.buttonDisabled]}
-            onPress={handleAnalyse}
-            disabled={loading}
-          >
-            {loading ? (
-              <View style={styles.loadingContainer}>
-                <ActivityIndicator color="#ffffff" size="small" />
-                <Text style={styles.buttonText}>  Analysing...</Text>
-              </View>
-            ) : (
-              <Text style={styles.buttonText}>Analyse</Text>
-            )}
-          </TouchableOpacity>
-        </View>
-
-        {/* Instructions */}
-        <View style={styles.instructions}>
-          <Text style={styles.instructionTitle}>How it works:</Text>
-          <Text style={styles.instructionText}>
-            1. Copy a product URL from any peptide vendor{'\n'}
-            2. Paste it above and tap Analyse{'\n'}
-            3. Get a Trust Score based on vendor documentation quality
+        {/* Hero Section */}
+        <View style={styles.heroSection}>
+          <Text style={styles.heroIcon}>🔬</Text>
+          <Text style={styles.heroTitle}>Verify Your Research Source</Text>
+          <Text style={styles.heroSubtitle}>
+            Paste a peptide vendor URL to get a detailed trust analysis
           </Text>
         </View>
 
-        {/* Disclaimer */}
-        <View style={styles.disclaimerContainer}>
-          <Text style={styles.disclaimer}>{DISCLAIMER}</Text>
+        {/* URL Input */}
+        <View style={styles.inputContainer}>
+          <TextInput
+            style={styles.input}
+            placeholder="Paste vendor product URL..."
+            placeholderTextColor={COLORS.textTertiary}
+            value={url}
+            onChangeText={setUrl}
+            autoCapitalize="none"
+            autoCorrect={false}
+            keyboardType="url"
+            returnKeyType="go"
+            onSubmitEditing={handleAnalyse}
+          />
         </View>
+
+        {/* Analyse Button */}
+        <TouchableOpacity
+          style={[styles.analyseButton, loading && styles.analyseButtonDisabled]}
+          onPress={handleAnalyse}
+          disabled={loading}
+          activeOpacity={0.8}
+        >
+          {loading ? (
+            <View style={styles.loadingContainer}>
+              <ActivityIndicator color={COLORS.textPrimary} size="small" />
+              <Text style={styles.loadingText}>Analysing...</Text>
+            </View>
+          ) : (
+            <Text style={styles.analyseButtonText}>Analyse Vendor</Text>
+          )}
+        </TouchableOpacity>
+
+        {/* Recent Analyses */}
+        {recentItems.length > 0 && (
+          <View style={styles.recentSection}>
+            <View style={styles.divider} />
+            <Text style={styles.recentTitle}>Recent Analyses</Text>
+            
+            {recentItems.map((item) => (
+              <TouchableOpacity
+                key={item.id}
+                style={styles.recentItem}
+                onPress={() => handleRecentTap(item)}
+                activeOpacity={0.7}
+              >
+                <View style={styles.recentLeft}>
+                  <Text style={styles.recentBrand}>{item.brand_name || item.domain}</Text>
+                  <Text style={styles.recentPeptide}>{item.peptide_name || 'Unknown peptide'}</Text>
+                  <View style={styles.recentMeta}>
+                    <Text style={styles.recentRisk}>
+                      {getRiskIcon(item.risk_level)} {item.risk_level} Risk
+                    </Text>
+                    <Text style={styles.recentDate}>
+                      {formatRelativeDate(item.analysed_at)}
+                    </Text>
+                  </View>
+                </View>
+                <View style={styles.recentRight}>
+                  <Text style={[styles.recentScore, { color: getRiskColor(item.risk_level) }]}>
+                    {item.trust_score}
+                  </Text>
+                  <Text style={styles.recentPts}>pts</Text>
+                  <Text style={styles.chevron}>›</Text>
+                </View>
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
       </ScrollView>
-    </KeyboardAvoidingView>
+    </SafeAreaView>
   );
+}
+
+function formatRelativeDate(dateString: string): string {
+  const date = new Date(dateString);
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffMins = Math.floor(diffMs / 60000);
+  const diffHours = Math.floor(diffMs / 3600000);
+  const diffDays = Math.floor(diffMs / 86400000);
+
+  if (diffMins < 60) {
+    return diffMins <= 1 ? 'Just now' : `${diffMins}m ago`;
+  } else if (diffHours < 24) {
+    return `${diffHours}h ago`;
+  } else if (diffDays === 1) {
+    return 'Yesterday';
+  } else if (diffDays < 7) {
+    return `${diffDays}d ago`;
+  } else {
+    return date.toLocaleDateString();
+  }
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0f172a',
+    backgroundColor: COLORS.bgPrimary,
+  },
+  scrollView: {
+    flex: 1,
   },
   scrollContent: {
-    flexGrow: 1,
     padding: 20,
   },
   header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
-    marginTop: 40,
     marginBottom: 40,
   },
-  title: {
-    fontSize: 36,
+  logo: {
+    fontSize: 28,
     fontWeight: 'bold',
-    color: '#ffffff',
-    letterSpacing: 1,
+    color: COLORS.textPrimary,
   },
-  subtitle: {
-    fontSize: 16,
-    color: '#94a3b8',
-    marginTop: 8,
-  },
-  inputSection: {
-    marginBottom: 30,
-  },
-  label: {
+  version: {
     fontSize: 14,
+    color: COLORS.textTertiary,
+    fontWeight: '500',
+  },
+  heroSection: {
+    alignItems: 'center',
+    marginBottom: 32,
+  },
+  heroIcon: {
+    fontSize: 48,
+    marginBottom: 16,
+  },
+  heroTitle: {
+    fontSize: 24,
     fontWeight: '600',
-    color: '#e2e8f0',
+    color: COLORS.textPrimary,
+    textAlign: 'center',
     marginBottom: 8,
   },
+  heroSubtitle: {
+    fontSize: 15,
+    color: COLORS.textSecondary,
+    textAlign: 'center',
+    lineHeight: 22,
+  },
+  inputContainer: {
+    marginBottom: 16,
+  },
   input: {
-    backgroundColor: '#1e293b',
+    backgroundColor: COLORS.bgTertiary,
     borderRadius: 12,
     padding: 16,
     fontSize: 16,
-    color: '#ffffff',
+    color: COLORS.textPrimary,
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: COLORS.surface,
   },
-  errorContainer: {
-    backgroundColor: '#fef2f2',
-    borderRadius: 8,
-    padding: 12,
-    marginTop: 12,
-  },
-  errorText: {
-    color: '#dc2626',
-    fontSize: 14,
-  },
-  button: {
-    backgroundColor: '#3b82f6',
+  analyseButton: {
+    backgroundColor: COLORS.accent,
     borderRadius: 12,
-    padding: 18,
+    padding: 16,
     alignItems: 'center',
-    marginTop: 16,
   },
-  buttonDisabled: {
-    backgroundColor: '#64748b',
+  analyseButtonDisabled: {
+    opacity: 0.7,
   },
-  buttonText: {
-    color: '#ffffff',
-    fontSize: 18,
+  analyseButtonText: {
+    color: COLORS.textPrimary,
+    fontSize: 16,
     fontWeight: '600',
   },
   loadingContainer: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 8,
   },
-  instructions: {
-    backgroundColor: '#1e293b',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 20,
-  },
-  instructionTitle: {
+  loadingText: {
+    color: COLORS.textPrimary,
     fontSize: 16,
     fontWeight: '600',
-    color: '#e2e8f0',
+  },
+  recentSection: {
+    marginTop: 32,
+  },
+  divider: {
+    height: 1,
+    backgroundColor: COLORS.surface,
+    marginBottom: 24,
+  },
+  recentTitle: {
+    fontSize: 14,
+    color: COLORS.textSecondary,
+    fontWeight: '600',
+    letterSpacing: 0.5,
+    marginBottom: 16,
+  },
+  recentItem: {
+    backgroundColor: COLORS.bgSecondary,
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  recentLeft: {
+    flex: 1,
+  },
+  recentBrand: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: COLORS.textPrimary,
+    marginBottom: 4,
+  },
+  recentPeptide: {
+    fontSize: 14,
+    color: COLORS.textSecondary,
     marginBottom: 8,
   },
-  instructionText: {
-    fontSize: 14,
-    color: '#94a3b8',
-    lineHeight: 22,
+  recentMeta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
   },
-  disclaimerContainer: {
-    marginTop: 'auto',
-    paddingTop: 20,
+  recentRisk: {
+    fontSize: 12,
+    color: COLORS.textSecondary,
   },
-  disclaimer: {
-    fontSize: 11,
-    color: '#64748b',
-    textAlign: 'center',
-    lineHeight: 16,
+  recentDate: {
+    fontSize: 12,
+    color: COLORS.textTertiary,
+  },
+  recentRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  recentScore: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    fontVariant: ['tabular-nums'],
+  },
+  recentPts: {
+    fontSize: 12,
+    color: COLORS.textTertiary,
+    marginRight: 8,
+  },
+  chevron: {
+    fontSize: 24,
+    color: COLORS.textTertiary,
   },
 });

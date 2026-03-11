@@ -1,12 +1,17 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
-  ScrollView,
   StyleSheet,
+  ScrollView,
   TouchableOpacity,
+  Modal,
+  Pressable,
+  Share,
 } from 'react-native';
-import { AnalysisResult, Signal, TIER_COLORS, TierType, DISCLAIMER } from '../types';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import Svg, { Circle, Defs, LinearGradient, Stop } from 'react-native-svg';
+import { AnalysisResult, Signal, COLORS, getTrustColor, getRiskColor, getRiskIcon } from '../types';
 
 interface ScoreDetailScreenProps {
   result: AnalysisResult;
@@ -15,300 +20,513 @@ interface ScoreDetailScreenProps {
 }
 
 export default function ScoreDetailScreen({ result, vendorName, onBack }: ScoreDetailScreenProps) {
-  const tierColor = TIER_COLORS[result.tier as TierType] || result.tier_colour || '#64748b';
+  const [selectedSignal, setSelectedSignal] = useState<Signal | null>(null);
+  
+  const trustColor = getTrustColor(result.trust_score);
+  const riskColor = getRiskColor(result.risk_level);
+  
+  // Circle dimensions
+  const size = 160;
+  const strokeWidth = 10;
+  const radius = (size - strokeWidth) / 2;
+  const circumference = 2 * Math.PI * radius;
+  const maxScore = 80;
+  const progress = Math.min(result.trust_score / maxScore, 1);
+  const strokeDashoffset = circumference * (1 - progress);
 
-  const renderSignal = (signal: Signal, isPositive: boolean) => (
-    <View 
-      key={signal.label} 
-      style={styles.signalCard}
+  const handleShare = async () => {
+    try {
+      await Share.share({
+        message: `PepCheck Analysis: ${result.brand_name} ${result.peptide_name}\nTrust Score: ${result.trust_score}/80\nRisk Level: ${result.risk_level}\n\nAnalysed: ${result.url}`,
+      });
+    } catch (error) {
+      console.error('Share failed:', error);
+    }
+  };
+
+  const renderSignalItem = (signal: Signal, isPositive: boolean) => (
+    <TouchableOpacity
+      key={signal.key}
+      style={styles.signalItem}
+      onPress={() => setSelectedSignal(signal)}
+      activeOpacity={0.7}
     >
-      <View style={styles.signalHeader}>
-        <View style={[
-          styles.pointsBadge,
-          { backgroundColor: isPositive ? '#166534' : '#991b1b' }
-        ]}>
-          <Text style={styles.pointsText}>
-            {isPositive ? '+' : ''}{signal.points}
-          </Text>
+      <View style={styles.signalLeft}>
+        <Text style={styles.signalIcon}>{isPositive ? '✓' : '⚠'}</Text>
+        <View style={styles.signalTextContainer}>
+          <Text style={styles.signalLabel}>{signal.label}</Text>
+          {signal.evidence && !isPositive && (
+            <Text style={styles.signalEvidence} numberOfLines={1}>
+              "{signal.evidence}"
+            </Text>
+          )}
         </View>
-        <Text style={styles.signalLabel}>{signal.label}</Text>
       </View>
-      {signal.evidence && signal.evidence.trim() !== '' && (
-        <View style={styles.evidenceContainer}>
-          <Text style={styles.evidenceLabel}>Evidence:</Text>
-          <Text style={styles.evidenceText}>"{signal.evidence}"</Text>
-        </View>
-      )}
-    </View>
+      <View style={styles.signalRight}>
+        <Text style={[styles.signalPoints, { color: isPositive ? COLORS.trustHigh : COLORS.trustLow }]}>
+          {isPositive ? `+${signal.points}` : signal.points}
+        </Text>
+        <Text style={styles.chevron}>›</Text>
+      </View>
+    </TouchableOpacity>
   );
 
   return (
-    <View style={styles.container}>
-      {/* Header with back button */}
+    <SafeAreaView style={styles.container}>
+      {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={onBack} style={styles.backButton}>
-          <Text style={styles.backText}>← Back</Text>
+          <Text style={styles.backText}>←</Text>
+        </TouchableOpacity>
+        <Text style={styles.headerTitle} numberOfLines={1}>{vendorName}</Text>
+        <TouchableOpacity onPress={handleShare} style={styles.shareButton}>
+          <Text style={styles.shareText}>Share</Text>
         </TouchableOpacity>
       </View>
 
-      <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
-        {/* Vendor Name and Score */}
-        <View style={styles.scoreHeader}>
-          <Text style={styles.vendorName} numberOfLines={2}>{vendorName}</Text>
-          <View style={styles.scoreRow}>
-            <Text style={[styles.trustScore, { color: tierColor }]}>
-              {result.trust_score}
-            </Text>
-            <Text style={styles.scoreMax}> / 100</Text>
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
+        {/* Trust Score Circle */}
+        <View style={styles.scoreContainer}>
+          <Svg width={size} height={size}>
+            <Defs>
+              <LinearGradient id="scoreGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                <Stop offset="0%" stopColor={trustColor} stopOpacity="1" />
+                <Stop offset="100%" stopColor={trustColor} stopOpacity="0.6" />
+              </LinearGradient>
+            </Defs>
+            {/* Background circle */}
+            <Circle
+              cx={size / 2}
+              cy={size / 2}
+              r={radius}
+              stroke={COLORS.surface}
+              strokeWidth={strokeWidth}
+              fill="none"
+            />
+            {/* Progress circle */}
+            <Circle
+              cx={size / 2}
+              cy={size / 2}
+              r={radius}
+              stroke="url(#scoreGradient)"
+              strokeWidth={strokeWidth}
+              fill="none"
+              strokeLinecap="round"
+              strokeDasharray={circumference}
+              strokeDashoffset={strokeDashoffset}
+              rotation="-90"
+              origin={`${size / 2}, ${size / 2}`}
+            />
+          </Svg>
+          <View style={styles.scoreTextContainer}>
+            <Text style={[styles.scoreValue, { color: trustColor }]}>{result.trust_score}</Text>
+            <Text style={styles.scoreLabel}>TRUST SCORE</Text>
           </View>
-          <View style={[styles.tierBadge, { backgroundColor: tierColor }]}>
-            <Text style={styles.tierText}>{result.tier}</Text>
-          </View>
-          {result.tier_description && (
-            <Text style={styles.tierDescription}>{result.tier_description}</Text>
-          )}
         </View>
 
-        {/* Divider */}
-        <View style={styles.divider} />
+        {/* Risk Level Badge */}
+        <View style={[styles.riskBadge, { backgroundColor: riskColor + '20', borderColor: riskColor }]}>
+          <Text style={styles.riskIcon}>{getRiskIcon(result.risk_level)}</Text>
+          <Text style={[styles.riskText, { color: riskColor }]}>
+            {result.risk_level.toUpperCase()} RISK
+          </Text>
+          <Text style={styles.riskDetail}>
+            {result.raw_score_breakdown.negative_count} red flag{result.raw_score_breakdown.negative_count !== 1 ? 's' : ''}
+          </Text>
+        </View>
+
+        {/* Brand & Peptide Info */}
+        <View style={styles.infoSection}>
+          <View style={styles.infoRow}>
+            <Text style={styles.infoLabel}>Brand</Text>
+            <Text style={styles.infoValue}>{result.brand_name}</Text>
+          </View>
+          <View style={styles.infoDivider} />
+          <View style={styles.infoRow}>
+            <Text style={styles.infoLabel}>Peptide</Text>
+            <Text style={styles.infoValue}>{result.peptide_name}</Text>
+          </View>
+          <View style={styles.infoDivider} />
+          <View style={styles.infoRow}>
+            <Text style={styles.infoLabel}>URL</Text>
+            <Text style={styles.infoUrl} numberOfLines={1}>{result.url}</Text>
+          </View>
+        </View>
 
         {/* Positive Signals */}
         {result.signals.positive.length > 0 && (
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>✓ POSITIVE SIGNALS</Text>
-            {result.signals.positive.map(s => renderSignal(s, true))}
+          <View style={styles.signalSection}>
+            <View style={styles.signalHeader}>
+              <Text style={styles.signalHeaderText}>POSITIVE SIGNALS</Text>
+              <View style={[styles.signalCount, { backgroundColor: COLORS.trustHigh + '20' }]}>
+                <Text style={[styles.signalCountText, { color: COLORS.trustHigh }]}>
+                  {result.signals.positive.length}
+                </Text>
+              </View>
+            </View>
+            {result.signals.positive.map((signal) => renderSignalItem(signal, true))}
           </View>
         )}
 
         {/* Negative Signals */}
         {result.signals.negative.length > 0 && (
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>✗ NEGATIVE SIGNALS</Text>
-            {result.signals.negative.map(s => renderSignal(s, false))}
+          <View style={styles.signalSection}>
+            <View style={styles.signalHeader}>
+              <Text style={styles.signalHeaderText}>RED FLAGS</Text>
+              <View style={[styles.signalCount, { backgroundColor: COLORS.trustLow + '20' }]}>
+                <Text style={[styles.signalCountText, { color: COLORS.trustLow }]}>
+                  {result.signals.negative.length}
+                </Text>
+              </View>
+            </View>
+            {result.signals.negative.map((signal) => renderSignalItem(signal, false))}
           </View>
         )}
-
-        {/* No Signals */}
-        {result.signals.positive.length === 0 && result.signals.negative.length === 0 && (
-          <View style={styles.noSignalsContainer}>
-            <Text style={styles.noSignalsText}>No specific signals detected</Text>
-          </View>
-        )}
-
-        {/* Score Breakdown */}
-        <View style={styles.breakdownSection}>
-          <Text style={styles.breakdownTitle}>Score Breakdown</Text>
-          <View style={styles.breakdownRow}>
-            <Text style={styles.breakdownLabel}>Positive signals:</Text>
-            <Text style={[styles.breakdownValue, styles.positiveValue]}>
-              +{result.raw_score_breakdown.positive_total}
-            </Text>
-          </View>
-          <View style={styles.breakdownRow}>
-            <Text style={styles.breakdownLabel}>Negative signals:</Text>
-            <Text style={[styles.breakdownValue, styles.negativeValue]}>
-              {result.raw_score_breakdown.negative_total}
-            </Text>
-          </View>
-          <View style={[styles.breakdownRow, styles.finalRow]}>
-            <Text style={styles.breakdownLabel}>Final score:</Text>
-            <Text style={[styles.breakdownValue, styles.finalValue]}>
-              {result.raw_score_breakdown.final_score}
-            </Text>
-          </View>
-        </View>
 
         {/* Disclaimer */}
-        <Text style={styles.disclaimer}>{DISCLAIMER}</Text>
+        {result.disclaimer && (
+          <Text style={styles.disclaimer}>{result.disclaimer}</Text>
+        )}
       </ScrollView>
-    </View>
+
+      {/* Signal Detail Modal */}
+      <Modal
+        visible={selectedSignal !== null}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setSelectedSignal(null)}
+      >
+        <Pressable style={styles.modalOverlay} onPress={() => setSelectedSignal(null)}>
+          <Pressable style={styles.modalContent} onPress={e => e.stopPropagation()}>
+            <View style={styles.modalHandle} />
+            
+            {selectedSignal && (
+              <>
+                <View style={styles.modalHeader}>
+                  <Text style={styles.modalIcon}>
+                    {selectedSignal.points > 0 ? '✓' : '⚠'}
+                  </Text>
+                  <Text style={styles.modalTitle}>{selectedSignal.label}</Text>
+                  <Text style={[
+                    styles.modalPoints,
+                    { color: selectedSignal.points > 0 ? COLORS.trustHigh : COLORS.trustLow }
+                  ]}>
+                    {selectedSignal.points > 0 ? `+${selectedSignal.points}` : selectedSignal.points} points
+                  </Text>
+                </View>
+
+                <View style={styles.modalDivider} />
+
+                {selectedSignal.rationale ? (
+                  <>
+                    <Text style={styles.modalSectionTitle}>WHY THIS MATTERS</Text>
+                    <Text style={styles.modalRationale}>{selectedSignal.rationale}</Text>
+                  </>
+                ) : (
+                  <Text style={styles.modalRationale}>
+                    {selectedSignal.points > 0
+                      ? 'This is a positive indicator of vendor quality and transparency in the research peptide market.'
+                      : 'This is a red flag that may indicate the vendor targets human consumers rather than legitimate researchers.'}
+                  </Text>
+                )}
+
+                {selectedSignal.evidence && (
+                  <>
+                    <Text style={styles.modalSectionTitle}>EVIDENCE FOUND</Text>
+                    <View style={styles.evidenceBox}>
+                      <Text style={styles.evidenceText}>"{selectedSignal.evidence}"</Text>
+                    </View>
+                  </>
+                )}
+
+                <TouchableOpacity
+                  style={styles.modalButton}
+                  onPress={() => setSelectedSignal(null)}
+                >
+                  <Text style={styles.modalButtonText}>Got it</Text>
+                </TouchableOpacity>
+              </>
+            )}
+          </Pressable>
+        </Pressable>
+      </Modal>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0f172a',
+    backgroundColor: COLORS.bgPrimary,
   },
   header: {
-    paddingTop: 50,
-    paddingHorizontal: 16,
-    paddingBottom: 10,
-    backgroundColor: '#0f172a',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
   },
   backButton: {
-    paddingVertical: 8,
+    padding: 8,
+    marginLeft: -8,
   },
   backText: {
-    color: '#3b82f6',
-    fontSize: 16,
-    fontWeight: '600',
+    fontSize: 24,
+    color: COLORS.textPrimary,
   },
-  scrollView: {
+  headerTitle: {
     flex: 1,
+    fontSize: 18,
+    fontWeight: '600',
+    color: COLORS.textPrimary,
+    textAlign: 'center',
+    marginHorizontal: 16,
+  },
+  shareButton: {
+    padding: 8,
+    marginRight: -8,
+  },
+  shareText: {
+    fontSize: 16,
+    color: COLORS.accent,
+    fontWeight: '600',
   },
   scrollContent: {
-    padding: 20,
-    paddingTop: 0,
+    paddingHorizontal: 20,
+    paddingBottom: 40,
   },
-  scoreHeader: {
+  scoreContainer: {
     alignItems: 'center',
+    justifyContent: 'center',
+    marginVertical: 16,
+  },
+  scoreTextContainer: {
+    position: 'absolute',
+    alignItems: 'center',
+  },
+  scoreValue: {
+    fontSize: 40,
+    fontWeight: 'bold',
+    fontVariant: ['tabular-nums'],
+  },
+  scoreLabel: {
+    fontSize: 10,
+    color: COLORS.textSecondary,
+    letterSpacing: 2,
+    marginTop: 4,
+  },
+  riskBadge: {
+    alignSelf: 'center',
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 20,
+    borderWidth: 1,
+    marginBottom: 20,
+    gap: 6,
+  },
+  riskIcon: {
+    fontSize: 14,
+  },
+  riskText: {
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 1,
+  },
+  riskDetail: {
+    fontSize: 11,
+    color: COLORS.textSecondary,
+  },
+  infoSection: {
+    backgroundColor: COLORS.bgSecondary,
+    borderRadius: 16,
+    padding: 16,
     marginBottom: 24,
   },
-  vendorName: {
-    fontSize: 22,
-    fontWeight: '700',
-    color: '#e2e8f0',
-    textAlign: 'center',
-    marginBottom: 16,
-  },
-  scoreRow: {
+  infoRow: {
     flexDirection: 'row',
-    alignItems: 'baseline',
-  },
-  trustScore: {
-    fontSize: 64,
-    fontWeight: 'bold',
-  },
-  scoreMax: {
-    fontSize: 24,
-    color: '#64748b',
-    fontWeight: '500',
-  },
-  tierBadge: {
-    paddingHorizontal: 20,
+    justifyContent: 'space-between',
+    alignItems: 'center',
     paddingVertical: 8,
-    borderRadius: 20,
-    marginTop: 12,
   },
-  tierText: {
-    color: '#ffffff',
+  infoLabel: {
+    fontSize: 14,
+    color: COLORS.textSecondary,
+  },
+  infoValue: {
     fontSize: 16,
+    color: COLORS.textPrimary,
     fontWeight: '600',
   },
-  tierDescription: {
-    fontSize: 14,
-    color: '#94a3b8',
-    textAlign: 'center',
-    marginTop: 12,
-    paddingHorizontal: 20,
-    lineHeight: 20,
+  infoUrl: {
+    fontSize: 12,
+    color: COLORS.textTertiary,
+    flex: 1,
+    textAlign: 'right',
+    marginLeft: 16,
   },
-  divider: {
+  infoDivider: {
     height: 1,
-    backgroundColor: '#334155',
-    marginVertical: 24,
+    backgroundColor: COLORS.surface,
+    marginVertical: 8,
   },
-  section: {
+  signalSection: {
     marginBottom: 24,
-  },
-  sectionTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#94a3b8',
-    letterSpacing: 1,
-    marginBottom: 16,
-  },
-  signalCard: {
-    backgroundColor: '#1e293b',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 12,
   },
   signalHeader: {
     flexDirection: 'row',
     alignItems: 'center',
+    marginBottom: 12,
+    gap: 8,
   },
-  pointsBadge: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 8,
-    marginRight: 12,
-    minWidth: 60,
-    alignItems: 'center',
+  signalHeaderText: {
+    fontSize: 12,
+    color: COLORS.textSecondary,
+    letterSpacing: 1,
+    fontWeight: '600',
   },
-  pointsText: {
-    color: '#ffffff',
-    fontSize: 16,
+  signalCount: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 10,
+  },
+  signalCountText: {
+    fontSize: 12,
     fontWeight: '700',
   },
-  signalLabel: {
+  signalItem: {
+    backgroundColor: COLORS.bgSecondary,
+    borderRadius: 12,
+    marginBottom: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 16,
+  },
+  signalLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
     flex: 1,
-    fontSize: 15,
-    color: '#e2e8f0',
+    gap: 12,
+  },
+  signalIcon: {
+    fontSize: 18,
+    color: COLORS.textPrimary,
+  },
+  signalTextContainer: {
+    flex: 1,
+  },
+  signalLabel: {
+    fontSize: 14,
+    color: COLORS.textPrimary,
     fontWeight: '500',
   },
-  evidenceContainer: {
-    marginTop: 12,
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: '#334155',
-  },
-  evidenceLabel: {
+  signalEvidence: {
     fontSize: 12,
-    color: '#64748b',
-    marginBottom: 4,
+    color: COLORS.textTertiary,
+    fontStyle: 'italic',
+    marginTop: 4,
+  },
+  signalRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  signalPoints: {
+    fontSize: 14,
+    fontWeight: '700',
+    fontVariant: ['tabular-nums'],
+  },
+  chevron: {
+    fontSize: 20,
+    color: COLORS.textTertiary,
+  },
+  disclaimer: {
+    fontSize: 12,
+    color: COLORS.textTertiary,
+    textAlign: 'center',
+    marginTop: 8,
+    lineHeight: 18,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    backgroundColor: COLORS.bgSecondary,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: 24,
+    paddingBottom: 40,
+  },
+  modalHandle: {
+    width: 40,
+    height: 4,
+    backgroundColor: COLORS.surface,
+    borderRadius: 2,
+    alignSelf: 'center',
+    marginBottom: 20,
+  },
+  modalHeader: {
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  modalIcon: {
+    fontSize: 32,
+    marginBottom: 12,
+  },
+  modalTitle: {
+    fontSize: 18,
+    color: COLORS.textPrimary,
+    fontWeight: '600',
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  modalPoints: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  modalDivider: {
+    height: 1,
+    backgroundColor: COLORS.surface,
+    marginVertical: 16,
+  },
+  modalSectionTitle: {
+    fontSize: 12,
+    color: COLORS.textSecondary,
+    letterSpacing: 1,
+    fontWeight: '600',
+    marginBottom: 8,
+  },
+  modalRationale: {
+    fontSize: 15,
+    color: COLORS.textPrimary,
+    lineHeight: 24,
+    marginBottom: 20,
+  },
+  evidenceBox: {
+    backgroundColor: COLORS.bgTertiary,
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 20,
   },
   evidenceText: {
     fontSize: 14,
-    color: '#94a3b8',
+    color: COLORS.textSecondary,
     fontStyle: 'italic',
-    lineHeight: 20,
+    lineHeight: 22,
   },
-  noSignalsContainer: {
-    padding: 40,
+  modalButton: {
+    backgroundColor: COLORS.accent,
+    paddingVertical: 14,
+    borderRadius: 12,
     alignItems: 'center',
   },
-  noSignalsText: {
-    color: '#64748b',
-    fontSize: 16,
-  },
-  breakdownSection: {
-    backgroundColor: '#1e293b',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 24,
-  },
-  breakdownTitle: {
+  modalButtonText: {
+    color: COLORS.textPrimary,
     fontSize: 16,
     fontWeight: '600',
-    color: '#e2e8f0',
-    marginBottom: 16,
-  },
-  breakdownRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingVertical: 8,
-  },
-  breakdownLabel: {
-    fontSize: 14,
-    color: '#94a3b8',
-  },
-  breakdownValue: {
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  positiveValue: {
-    color: '#22c55e',
-  },
-  negativeValue: {
-    color: '#ef4444',
-  },
-  finalRow: {
-    borderTopWidth: 1,
-    borderTopColor: '#334155',
-    marginTop: 8,
-    paddingTop: 16,
-  },
-  finalValue: {
-    color: '#ffffff',
-    fontSize: 18,
-  },
-  disclaimer: {
-    fontSize: 11,
-    color: '#64748b',
-    textAlign: 'center',
-    lineHeight: 16,
-    marginBottom: 40,
   },
 });
