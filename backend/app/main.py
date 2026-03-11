@@ -1,7 +1,11 @@
 """
-PepCheck API v2.0 — main.py
+PepCheck API v3.0 — main.py
 
-FastAPI application with improved Trust Score algorithm.
+FastAPI application with Trust Score v3.0:
+- trust_score: sum of positive signals only
+- risk_level: "Low" | "Moderate" | "High" based on negative count
+- brand_name and peptide_name extraction
+- Detailed rationales for each signal
 """
 
 from fastapi import FastAPI, HTTPException
@@ -16,8 +20,8 @@ from app.scorer import calculate_score
 
 app = FastAPI(
     title="PepCheck API",
-    description="Peptide vendor trust scoring API — v2.0",
-    version="2.0.0"
+    description="Peptide vendor trust scoring API — v3.0",
+    version="3.0.0"
 )
 
 app.add_middleware(
@@ -35,7 +39,7 @@ class AnalyseRequest(BaseModel):
 
 @app.get("/")
 async def root():
-    return {"status": "ok", "version": "2.0.0", "service": "PepCheck API"}
+    return {"status": "ok", "version": "3.0.0", "service": "PepCheck API"}
 
 
 @app.post("/analyse")
@@ -75,4 +79,4 @@ async def analyse_vendor(request: AnalyseRequest):
 
 @app.get("/health")
 async def health_check():
-    return {"status": "healthy", "version": "2.0.0"}
+    return {"status": "healthy", "version": "3.0.0"}

@@ -1,8 +1,12 @@
 """
-PepCheck Analyser v2.0
+PepCheck Analyser v3.0
 
 Sends fetched page content to GPT-4 for structured signal extraction
-using the Trust Score v2.0 framework.
+using the Trust Score v3.0 framework.
+
+New in v3.0:
+- Extracts brand_name and peptide_name
+- Provides detailed rationales for each signal
 """
 
 import json
@@ -17,7 +21,13 @@ Your task is to analyse the text content from a peptide vendor's product page an
 
 Return ONLY a valid JSON object. No explanation, no markdown, no preamble."""
 
-ANALYSIS_PROMPT = """Analyse the following vendor page content and extract trust signals according to the Trust Score v2.0 framework.
+ANALYSIS_PROMPT = """Analyse the following vendor page content and extract trust signals according to the Trust Score v3.0 framework.
+
+**FIRST, IDENTIFY THE VENDOR AND PRODUCT:**
+
+1. `brand_name`: The vendor's brand or company name (e.g., "OP Labs", "Peptide Sciences", "TestedPeptides"). Look for the company name in headers, footers, logos, or "About" text. If unclear, use the domain name as a fallback.
+
+2. `peptide_name`: The specific peptide being sold on this page (e.g., "GHK-Cu", "BPC-157", "TB-500", "Semaglutide"). Use the standard scientific name or common research abbreviation. If multiple peptides are listed (bundle), return "Bundle" or the primary peptide.
 
 **POSITIVE SIGNALS — Award points ONLY when there is clear, explicit evidence:**
 
@@ -59,6 +69,15 @@ ANALYSIS_PROMPT = """Analyse the following vendor page content and extract trust
 
 - `price_unrealistic` (-5): ONLY apply if the price per mg is dramatically below the typical research-grade peptide market range. Research peptides typically cost £0.20-£2.00/mg depending on the compound. Only flag this if the price appears to be less than £0.10/mg or equivalent — a level impossible to achieve with legitimate synthesis and third-party testing. Do not apply for any normally priced product. Do NOT apply this penalty to bundle products (products sold with multiple items together), as the per-mg calculation from a bundle price is unreliable.
 
+**FOR EACH SIGNAL, YOU MUST ALSO PROVIDE A RATIONALE:**
+
+For every signal (both positive and negative) where you assign a non-zero value, provide a detailed `rationale` that explains:
+1. What this signal means in the context of peptide research quality assurance
+2. Why it matters for assessing vendor trustworthiness
+3. Specific evidence from the page that justifies your score
+
+The rationale should be 2-4 sentences, written for a consumer who wants to understand WHY this signal matters.
+
 **VENDOR PAGE CONTENT:**
 
 {page_content}
@@ -66,6 +85,8 @@ ANALYSIS_PROMPT = """Analyse the following vendor page content and extract trust
 **Return this exact JSON structure with the point values filled in (use 0 if a signal is not present):**
 
 {{
+  "brand_name": "The vendor's brand/company name",
+  "peptide_name": "The specific peptide (e.g., GHK-Cu, BPC-157)",
   "positive_signals": {{
     "coa_batch_specific": 0,
     "coa_hplc": 0,
@@ -89,13 +110,19 @@ ANALYSIS_PROMPT = """Analyse the following vendor page content and extract trust
     "price_unrealistic": 0
   }},
   "evidence": {{
-    "coa_batch_specific": "Brief quote or observation from the text that supports this score",
+    "coa_batch_specific": "Brief quote or observation from the text",
     "coa_hplc": "Brief quote or observation",
     "coa_ms": "Brief quote or observation",
     "coa_third_party_accredited": "Brief quote or observation",
     "claims_therapeutic": "Brief quote or observation",
     "sells_accessories": "Brief quote or observation",
     "no_coa_or_generic": "Brief quote or observation"
+  }},
+  "rationales": {{
+    "coa_batch_specific": "2-4 sentence explanation of what this signal means, why it matters, and how the evidence supports the score",
+    "coa_hplc": "2-4 sentence explanation...",
+    "claims_therapeutic": "2-4 sentence explanation...",
+    "sells_accessories": "2-4 sentence explanation..."
   }}
 }}"""
 
@@ -103,7 +130,8 @@ ANALYSIS_PROMPT = """Analyse the following vendor page content and extract trust
 async def analyse_content(page_content: str, url: str) -> dict:
     """
     Sends page content to GPT-4 for structured signal extraction.
-    Returns a dict with positive_signals, negative_signals, and evidence.
+    Returns a dict with positive_signals, negative_signals, evidence, rationales,
+    brand_name, and peptide_name.
     """
     from bs4 import BeautifulSoup
 
@@ -135,7 +163,7 @@ async def analyse_content(page_content: str, url: str) -> dict:
             ],
             temperature=0.1,  # Low temperature for consistent, factual analysis
             response_format={"type": "json_object"},
-            max_tokens=2000
+            max_tokens=3000  # Increased for rationales
         )
 
         raw = response.choices[0].message.content

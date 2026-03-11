@@ -1,11 +1,14 @@
 """
-PepCheck Scorer v2.0
+PepCheck Scorer v3.0
 
-Converts the structured signal output from analyser_v2.py into a final
-Trust Score, tier, and human-readable signal list.
+Converts the structured signal output from analyser_v2.py into:
+- trust_score: sum of positive points only (no negatives subtracted)
+- risk_level: "Low" | "Moderate" | "High" based on negative signal count
+
+The tier system is deprecated. We now use trust_score + risk_level.
 """
 
-from typing import TypedDict
+from typing import TypedDict, Literal
 
 # --- Point values for each signal ---
 
@@ -59,30 +62,25 @@ NEGATIVE_LABELS = {
     "price_unrealistic": "Price is unrealistically low for research-grade material",
 }
 
-# --- Tier definitions ---
-
-TIERS = [
-    {"min": 80, "label": "Excellent", "colour": "#27AE60", "description": "Exceptional transparency and rigorous testing. Likely a top-tier research supplier."},
-    {"min": 60, "label": "Good", "colour": "#F2C94C", "description": "Meets most key criteria. Minor gaps in documentation or transparency."},
-    {"min": 40, "label": "Caution", "colour": "#E67E22", "description": "Several red flags or missing key trust signals. Proceed with significant caution."},
-    {"min": 0, "label": "High Risk", "colour": "#C0392B", "description": "Major red flags present. Not recommended for research purposes."},
-]
-
 
 def calculate_score(analysis_result: dict) -> dict:
     """
     Takes the structured output from the analyser and returns a complete
     Trust Score result ready for the mobile app.
+    
+    v3.0 Changes:
+    - trust_score is now the sum of POSITIVE signals only
+    - Negative signals determine risk_level, not score
+    - Tier system deprecated
     """
     positive_signals = analysis_result.get("positive_signals", {})
     negative_signals = analysis_result.get("negative_signals", {})
     evidence = analysis_result.get("evidence", {})
+    rationales = analysis_result.get("rationales", {})
 
-    # --- Calculate totals ---
+    # --- Calculate positive total ---
     positive_total = 0
-    negative_total = 0
     signal_list_positive = []
-    signal_list_negative = []
 
     for key, max_points in POSITIVE_POINTS.items():
         awarded = positive_signals.get(key, 0)
@@ -91,48 +89,61 @@ def calculate_score(analysis_result: dict) -> dict:
         if awarded > 0:
             positive_total += awarded
             signal_list_positive.append({
+                "key": key,
                 "label": POSITIVE_LABELS[key],
                 "points": awarded,
-                "evidence": evidence.get(key, "")
+                "evidence": evidence.get(key, ""),
+                "rationale": rationales.get(key, ""),
             })
+
+    # --- Count negative signals and build list ---
+    negative_count = 0
+    signal_list_negative = []
 
     for key, max_deduction in NEGATIVE_POINTS.items():
         deducted = negative_signals.get(key, 0)
-        # Ensure it's negative or zero
+        # Normalise: ensure it's negative or zero
         if deducted > 0:
-            deducted = -deducted  # Normalise if GPT returned a positive number
+            deducted = -deducted
         # Clamp to valid range (max_deduction to 0)
         deducted = max(max_deduction, min(deducted, 0))
         if deducted < 0:
-            negative_total += deducted
+            negative_count += 1
             signal_list_negative.append({
+                "key": key,
                 "label": NEGATIVE_LABELS[key],
                 "points": deducted,
-                "evidence": evidence.get(key, "")
+                "evidence": evidence.get(key, ""),
+                "rationale": rationales.get(key, ""),
             })
 
-    final_score = max(0, min(100, positive_total + negative_total))
+    # --- Trust score is positives only (capped at 80 max possible) ---
+    trust_score = positive_total
 
-    # --- Determine tier ---
-    tier = TIERS[-1]  # Default to lowest tier
-    for t in TIERS:
-        if final_score >= t["min"]:
-            tier = t
-            break
+    # --- Risk level based on negative signal count ---
+    if negative_count >= 3:
+        risk_level = "High"
+    elif negative_count >= 1:
+        risk_level = "Moderate"
+    else:
+        risk_level = "Low"
+
+    # --- Extract brand and peptide from analyser output ---
+    brand_name = analysis_result.get("brand_name", "Unknown")
+    peptide_name = analysis_result.get("peptide_name", "Unknown")
 
     return {
-        "trust_score": final_score,
-        "tier": tier["label"],
-        "tier_colour": tier["colour"],
-        "tier_description": tier["description"],
+        "trust_score": trust_score,
+        "risk_level": risk_level,
+        "brand_name": brand_name,
+        "peptide_name": peptide_name,
         "signals": {
             "positive": signal_list_positive,
             "negative": signal_list_negative,
         },
         "raw_score_breakdown": {
             "positive_total": positive_total,
-            "negative_total": negative_total,
-            "final_score": final_score,
+            "negative_count": negative_count,
         },
         "disclaimer": (
             "Pep Check is an information tool only. It does not constitute medical advice "
