@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { NavigationContainer } from '@react-navigation/native';
@@ -12,6 +12,7 @@ import BrandScoresScreen from './src/screens/BrandScoresScreen';
 import ScoreDetailScreen from './src/screens/ScoreDetailScreen';
 import ComparisonScreen from './src/screens/ComparisonScreen';
 import { AnalysisResult, HistoryItem, COLORS, inferRiskLevel } from './src/types';
+import { runMigrationV3 } from './src/services/migration';
 
 const Tab = createBottomTabNavigator();
 
@@ -23,6 +24,11 @@ type ScreenState =
 
 export default function App() {
   const [screenState, setScreenState] = useState<ScreenState>({ type: 'tabs' });
+
+  // Run v3 migration on app startup
+  useEffect(() => {
+    runMigrationV3();
+  }, []);
 
   const handleAnalysisComplete = (result: AnalysisResult) => {
     setScreenState({ type: 'results', result });
