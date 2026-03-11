@@ -57,7 +57,7 @@ ANALYSIS_PROMPT = """Analyse the following vendor page content and extract trust
 
 - `no_contact_address` (-10): No physical address AND no contact email or phone number can be found on the page or site.
 
-- `price_unrealistic` (-5): ONLY apply if the price per mg is dramatically below the typical research-grade peptide market range. Research peptides typically cost £0.20-£2.00/mg depending on the compound. Only flag this if the price appears to be less than £0.10/mg or equivalent — a level impossible to achieve with legitimate synthesis and third-party testing. Do not apply for any normally priced product.
+- `price_unrealistic` (-5): ONLY apply if the price per mg is dramatically below the typical research-grade peptide market range. Research peptides typically cost £0.20-£2.00/mg depending on the compound. Only flag this if the price appears to be less than £0.10/mg or equivalent — a level impossible to achieve with legitimate synthesis and third-party testing. Do not apply for any normally priced product. Do NOT apply this penalty to bundle products (products sold with multiple items together), as the per-mg calculation from a bundle price is unreliable.
 
 **VENDOR PAGE CONTENT:**
 
