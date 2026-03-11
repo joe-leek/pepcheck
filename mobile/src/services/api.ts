@@ -3,7 +3,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AnalysisResult, HistoryItem } from '../types';
 
-const API_BASE_URL = 'https://pepcheck.onrender.com';
+const API_BASE_URL = 'https://pepcheck-api.pepcheck.app';
 
 export async function analyseVendor(url: string): Promise<AnalysisResult> {
   const response = await fetch(`${API_BASE_URL}/analyse`, {
