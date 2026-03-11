@@ -10,7 +10,7 @@ import {
   Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { HistoryItem, COLORS, getRiskColor, getRiskIcon } from '../types';
+import { HistoryItem, COLORS, getRiskColor, getRiskIcon, inferRiskLevel } from '../types';
 import { getHistory, getUniquePeptides, deleteHistoryItem } from '../services/api';
 
 interface HistoryScreenProps {
@@ -167,7 +167,9 @@ export default function HistoryScreen({ onSelectItem, onCompare }: HistoryScreen
 
   const renderItem = ({ item }: { item: HistoryItem }) => {
     const isSelected = selectedItems.has(item.id);
-    const riskColor = getRiskColor(item.risk_level);
+    // Handle legacy data that might not have risk_level
+    const riskLevel = item.risk_level || inferRiskLevel(item.trust_score);
+    const riskColor = getRiskColor(riskLevel);
 
     return (
       <TouchableOpacity
@@ -207,7 +209,7 @@ export default function HistoryScreen({ onSelectItem, onCompare }: HistoryScreen
           <View style={styles.itemFooter}>
             <View style={styles.riskBadge}>
               <Text style={styles.riskText}>
-                {getRiskIcon(item.risk_level)} {item.risk_level} Risk
+                {getRiskIcon(riskLevel)} {riskLevel} Risk
               </Text>
             </View>
             <Text style={styles.time}>{formatTime(item.analysed_at)}</Text>

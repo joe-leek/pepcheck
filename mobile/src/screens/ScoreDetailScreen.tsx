@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Circle, Defs, LinearGradient, Stop } from 'react-native-svg';
-import { AnalysisResult, Signal, COLORS, getTrustColor, getRiskColor, getRiskIcon } from '../types';
+import { AnalysisResult, Signal, COLORS, getTrustColor, getRiskColor, getRiskIcon, inferRiskLevel } from '../types';
 
 interface ScoreDetailScreenProps {
   result: AnalysisResult;
@@ -22,8 +22,32 @@ interface ScoreDetailScreenProps {
 export default function ScoreDetailScreen({ result, vendorName, onBack }: ScoreDetailScreenProps) {
   const [selectedSignal, setSelectedSignal] = useState<Signal | null>(null);
   
+  // Safety check for missing result
+  if (!result) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.header}>
+          <TouchableOpacity onPress={onBack} style={styles.backButton}>
+            <Text style={styles.backText}>←</Text>
+          </TouchableOpacity>
+        </View>
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 40 }}>
+          <Text style={{ color: COLORS.textSecondary, fontSize: 16, textAlign: 'center' }}>
+            No analysis data found. This may be from an older version.
+          </Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+  
+  // Handle legacy data that might not have risk_level
+  const riskLevel = result.risk_level || inferRiskLevel(result.trust_score, result.raw_score_breakdown?.negative_count);
   const trustColor = getTrustColor(result.trust_score);
-  const riskColor = getRiskColor(result.risk_level);
+  const riskColor = getRiskColor(riskLevel);
+  
+  // Ensure signals arrays exist
+  const positiveSignals = result.signals?.positive ?? [];
+  const negativeSignals = result.signals?.negative ?? [];
   
   // Circle dimensions
   const size = 160;
@@ -37,7 +61,7 @@ export default function ScoreDetailScreen({ result, vendorName, onBack }: ScoreD
   const handleShare = async () => {
     try {
       await Share.share({
-        message: `PepCheck Analysis: ${result.brand_name} ${result.peptide_name}\nTrust Score: ${result.trust_score}/80\nRisk Level: ${result.risk_level}\n\nAnalysed: ${result.url}`,
+        message: `PepCheck Analysis: ${result.brand_name || 'Unknown'} ${result.peptide_name || 'Unknown'}\nTrust Score: ${result.trust_score}/80\nRisk Level: ${riskLevel}\n\nAnalysed: ${result.url}`,
       });
     } catch (error) {
       console.error('Share failed:', error);
@@ -126,12 +150,12 @@ export default function ScoreDetailScreen({ result, vendorName, onBack }: ScoreD
 
         {/* Risk Level Badge */}
         <View style={[styles.riskBadge, { backgroundColor: riskColor + '20', borderColor: riskColor }]}>
-          <Text style={styles.riskIcon}>{getRiskIcon(result.risk_level)}</Text>
+          <Text style={styles.riskIcon}>{getRiskIcon(riskLevel)}</Text>
           <Text style={[styles.riskText, { color: riskColor }]}>
-            {result.risk_level.toUpperCase()} RISK
+            {riskLevel.toUpperCase()} RISK
           </Text>
           <Text style={styles.riskDetail}>
-            {result.raw_score_breakdown.negative_count} red flag{result.raw_score_breakdown.negative_count !== 1 ? 's' : ''}
+            {result.raw_score_breakdown?.negative_count ?? 0} red flag{(result.raw_score_breakdown?.negative_count ?? 0) !== 1 ? 's' : ''}
           </Text>
         </View>
 
@@ -154,32 +178,32 @@ export default function ScoreDetailScreen({ result, vendorName, onBack }: ScoreD
         </View>
 
         {/* Positive Signals */}
-        {result.signals.positive.length > 0 && (
+        {positiveSignals.length > 0 && (
           <View style={styles.signalSection}>
             <View style={styles.signalHeader}>
               <Text style={styles.signalHeaderText}>POSITIVE SIGNALS</Text>
               <View style={[styles.signalCount, { backgroundColor: COLORS.trustHigh + '20' }]}>
                 <Text style={[styles.signalCountText, { color: COLORS.trustHigh }]}>
-                  {result.signals.positive.length}
+                  {positiveSignals.length}
                 </Text>
               </View>
             </View>
-            {result.signals.positive.map((signal) => renderSignalItem(signal, true))}
+            {positiveSignals.map((signal) => renderSignalItem(signal, true))}
           </View>
         )}
 
         {/* Negative Signals */}
-        {result.signals.negative.length > 0 && (
+        {negativeSignals.length > 0 && (
           <View style={styles.signalSection}>
             <View style={styles.signalHeader}>
               <Text style={styles.signalHeaderText}>RED FLAGS</Text>
               <View style={[styles.signalCount, { backgroundColor: COLORS.trustLow + '20' }]}>
                 <Text style={[styles.signalCountText, { color: COLORS.trustLow }]}>
-                  {result.signals.negative.length}
+                  {negativeSignals.length}
                 </Text>
               </View>
             </View>
-            {result.signals.negative.map((signal) => renderSignalItem(signal, false))}
+            {negativeSignals.map((signal) => renderSignalItem(signal, false))}
           </View>
         )}
 

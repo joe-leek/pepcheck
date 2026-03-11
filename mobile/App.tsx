@@ -11,7 +11,7 @@ import HistoryScreen from './src/screens/HistoryScreen';
 import BrandScoresScreen from './src/screens/BrandScoresScreen';
 import ScoreDetailScreen from './src/screens/ScoreDetailScreen';
 import ComparisonScreen from './src/screens/ComparisonScreen';
-import { AnalysisResult, HistoryItem, COLORS } from './src/types';
+import { AnalysisResult, HistoryItem, COLORS, inferRiskLevel } from './src/types';
 
 const Tab = createBottomTabNavigator();
 
@@ -33,20 +33,37 @@ export default function App() {
   };
 
   const handleHistorySelect = (item: HistoryItem) => {
+    // Handle legacy data - ensure risk_level exists
+    const riskLevel = item.risk_level || inferRiskLevel(item.trust_score);
+    const brandName = item.brand_name || item.domain;
+    const peptideName = item.peptide_name || 'Unknown';
+    
     if (item.fullResult) {
+      // Ensure fullResult has required fields (may be missing in legacy data)
+      const safeResult: AnalysisResult = {
+        ...item.fullResult,
+        risk_level: item.fullResult.risk_level || riskLevel,
+        brand_name: item.fullResult.brand_name || brandName,
+        peptide_name: item.fullResult.peptide_name || peptideName,
+        signals: item.fullResult.signals || { positive: [], negative: [] },
+        raw_score_breakdown: item.fullResult.raw_score_breakdown || {
+          positive_total: item.trust_score,
+          negative_count: 0,
+        },
+      };
       setScreenState({
         type: 'detail',
-        result: item.fullResult,
-        vendorName: item.brand_name || item.domain,
+        result: safeResult,
+        vendorName: brandName,
       });
     } else {
       // Fallback for old history items without full result
       const partialResult: AnalysisResult = {
         url: item.url,
         trust_score: item.trust_score,
-        risk_level: item.risk_level,
-        brand_name: item.brand_name || item.domain,
-        peptide_name: item.peptide_name || 'Unknown',
+        risk_level: riskLevel,
+        brand_name: brandName,
+        peptide_name: peptideName,
         signals: { positive: [], negative: [] },
         raw_score_breakdown: {
           positive_total: item.trust_score,
@@ -57,7 +74,7 @@ export default function App() {
       setScreenState({
         type: 'detail',
         result: partialResult,
-        vendorName: item.brand_name || item.domain,
+        vendorName: brandName,
       });
     }
   };

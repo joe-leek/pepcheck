@@ -73,22 +73,37 @@ export const getTrustColor = (score: number): string => {
   return COLORS.trustLow;
 };
 
-// Get color based on risk level
-export const getRiskColor = (risk: RiskLevel): string => {
+// Get color based on risk level (with null safety)
+export const getRiskColor = (risk: RiskLevel | undefined | null): string => {
   switch (risk) {
     case 'Low': return COLORS.trustHigh;
     case 'Moderate': return COLORS.trustMedium;
     case 'High': return COLORS.trustLow;
+    default: return COLORS.textSecondary; // Fallback for undefined
   }
 };
 
-// Get risk icon
-export const getRiskIcon = (risk: RiskLevel): string => {
+// Get risk icon (with null safety)
+export const getRiskIcon = (risk: RiskLevel | undefined | null): string => {
   switch (risk) {
     case 'Low': return '🟢';
     case 'Moderate': return '🟡';
     case 'High': return '🔴';
+    default: return '⚪'; // Fallback for undefined
   }
+};
+
+// Infer risk level from score (for legacy data migration)
+export const inferRiskLevel = (score: number, negativeCount?: number): RiskLevel => {
+  if (negativeCount !== undefined) {
+    if (negativeCount >= 3) return 'High';
+    if (negativeCount >= 1) return 'Moderate';
+    return 'Low';
+  }
+  // Fallback: infer from score
+  if (score >= 50) return 'Low';
+  if (score >= 25) return 'Moderate';
+  return 'High';
 };
 
 export const DISCLAIMER = "Pep Check is an information tool only. It does not constitute medical advice and should not be used to make decisions about human consumption of any substance.";
