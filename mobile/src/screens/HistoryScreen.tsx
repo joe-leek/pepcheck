@@ -1,34 +1,47 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
-  FlatList,
   StyleSheet,
+  FlatList,
   TouchableOpacity,
+  TextInput,
   RefreshControl,
+  Alert,
 } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { HistoryItem, TIER_COLORS, TierType, DISCLAIMER } from '../types';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { HistoryItem, COLORS, getRiskColor, getRiskIcon } from '../types';
+import { getHistory, getUniquePeptides, deleteHistoryItem } from '../services/api';
 
 interface HistoryScreenProps {
   onSelectItem: (item: HistoryItem) => void;
-  onCompare: (items: HistoryItem[]) => void;
+  onCompare: (items: HistoryItem[], peptideName: string) => void;
 }
 
 export default function HistoryScreen({ onSelectItem, onCompare }: HistoryScreenProps) {
   const [history, setHistory] = useState<HistoryItem[]>([]);
+  const [filteredHistory, setFilteredHistory] = useState<HistoryItem[]>([]);
+  const [peptides, setPeptides] = useState<string[]>([]);
+  const [selectedPeptide, setSelectedPeptide] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
 
   const loadHistory = useCallback(async () => {
     try {
-      const stored = await AsyncStorage.getItem('pepcheck_history');
-      if (stored) {
-        setHistory(JSON.parse(stored));
-      }
+      const [historyData, peptideData] = await Promise.all([
+        getHistory(),
+        getUniquePeptides(),
+      ]);
+      setHistory(historyData);
+      setPeptides(peptideData);
     } catch (error) {
       console.error('Failed to load history:', error);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
     }
   }, []);
 
@@ -36,233 +49,416 @@ export default function HistoryScreen({ onSelectItem, onCompare }: HistoryScreen
     loadHistory();
   }, [loadHistory]);
 
-  const onRefresh = async () => {
-    setRefreshing(true);
-    await loadHistory();
-    setRefreshing(false);
-  };
+  // Filter history based on search and peptide filter
+  useEffect(() => {
+    let filtered = history;
 
-  const formatDate = (isoString: string) => {
-    const date = new Date(isoString);
-    return date.toLocaleDateString('en-GB', {
-      day: 'numeric',
-      month: 'short',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-  };
-
-  const toggleSelectionMode = () => {
-    if (selectionMode) {
-      // Exiting selection mode
-      setSelectedItems(new Set());
+    // Apply peptide filter
+    if (selectedPeptide) {
+      filtered = filtered.filter(
+        item => item.peptide_name.toLowerCase() === selectedPeptide.toLowerCase()
+      );
     }
-    setSelectionMode(!selectionMode);
-  };
 
-  const toggleItemSelection = (itemId: string) => {
+    // Apply search filter
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase();
+      filtered = filtered.filter(
+        item =>
+          item.brand_name?.toLowerCase().includes(query) ||
+          item.peptide_name?.toLowerCase().includes(query) ||
+          item.domain.toLowerCase().includes(query)
+      );
+    }
+
+    setFilteredHistory(filtered);
+  }, [history, selectedPeptide, searchQuery]);
+
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+    loadHistory();
+  }, [loadHistory]);
+
+  const toggleSelection = (id: string) => {
     const newSelected = new Set(selectedItems);
-    if (newSelected.has(itemId)) {
-      newSelected.delete(itemId);
-    } else if (newSelected.size < 3) {
-      newSelected.add(itemId);
+    if (newSelected.has(id)) {
+      newSelected.delete(id);
+    } else {
+      newSelected.add(id);
     }
     setSelectedItems(newSelected);
   };
 
-  const handleCompareNow = () => {
-    const itemsToCompare = history.filter(item => selectedItems.has(item.id));
-    if (itemsToCompare.length >= 2) {
-      onCompare(itemsToCompare);
-      // Reset selection state
-      setSelectionMode(false);
-      setSelectedItems(new Set());
+  const handleCompare = () => {
+    const items = filteredHistory.filter(item => selectedItems.has(item.id));
+    if (items.length < 2) {
+      Alert.alert('Select More', 'Please select at least 2 items to compare.');
+      return;
+    }
+
+    // Check if all selected items are the same peptide
+    const peptides = new Set(items.map(item => item.peptide_name.toLowerCase()));
+    if (peptides.size > 1) {
+      Alert.alert(
+        'Different Peptides',
+        'For a meaningful comparison, please select vendors selling the same peptide. Use the peptide filter to narrow your selection.',
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+
+    const peptideName = items[0].peptide_name;
+    setSelectionMode(false);
+    setSelectedItems(new Set());
+    onCompare(items, peptideName);
+  };
+
+  const handleDelete = async (id: string) => {
+    Alert.alert(
+      'Delete Analysis',
+      'Are you sure you want to delete this analysis?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            await deleteHistoryItem(id);
+            loadHistory();
+          },
+        },
+      ]
+    );
+  };
+
+  const formatDate = (dateString: string): string => {
+    const date = new Date(dateString);
+    const now = new Date();
+    const diffMs = now.getTime() - date.getTime();
+    const diffDays = Math.floor(diffMs / 86400000);
+
+    if (diffDays === 0) {
+      return 'Today';
+    } else if (diffDays === 1) {
+      return 'Yesterday';
+    } else if (diffDays < 7) {
+      return `${diffDays} days ago`;
+    } else {
+      return date.toLocaleDateString();
     }
   };
 
-  const handleItemPress = (item: HistoryItem) => {
-    if (selectionMode) {
-      toggleItemSelection(item.id);
-    } else {
-      onSelectItem(item);
-    }
+  const formatTime = (dateString: string): string => {
+    const date = new Date(dateString);
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
+
+  // Group items by date
+  const groupedHistory = filteredHistory.reduce((groups, item) => {
+    const date = formatDate(item.analysed_at);
+    if (!groups[date]) {
+      groups[date] = [];
+    }
+    groups[date].push(item);
+    return groups;
+  }, {} as Record<string, HistoryItem[]>);
+
+  const sections = Object.entries(groupedHistory);
 
   const renderItem = ({ item }: { item: HistoryItem }) => {
-    const tierColor = TIER_COLORS[item.tier as TierType] || '#64748b';
     const isSelected = selectedItems.has(item.id);
-    
+    const riskColor = getRiskColor(item.risk_level);
+
     return (
-      <TouchableOpacity 
-        style={[
-          styles.historyItem,
-          selectionMode && styles.historyItemSelectable,
-          isSelected && styles.historyItemSelected,
-        ]}
-        onPress={() => handleItemPress(item)}
+      <TouchableOpacity
+        style={[styles.historyItem, isSelected && styles.historyItemSelected]}
+        onPress={() => {
+          if (selectionMode) {
+            toggleSelection(item.id);
+          } else {
+            onSelectItem(item);
+          }
+        }}
+        onLongPress={() => {
+          if (!selectionMode) {
+            setSelectionMode(true);
+            toggleSelection(item.id);
+          }
+        }}
+        activeOpacity={0.7}
       >
         {selectionMode && (
           <View style={[styles.checkbox, isSelected && styles.checkboxSelected]}>
             {isSelected && <Text style={styles.checkmark}>✓</Text>}
           </View>
         )}
+        
         <View style={styles.itemContent}>
           <View style={styles.itemHeader}>
-            <Text style={styles.domain} numberOfLines={1}>{item.domain}</Text>
-            <View style={[styles.tierBadge, { backgroundColor: tierColor }]}>
-              <Text style={styles.tierText}>{item.tier}</Text>
+            <Text style={styles.brandName}>{item.brand_name || item.domain}</Text>
+            <View style={styles.scoreContainer}>
+              <Text style={[styles.score, { color: riskColor }]}>{item.trust_score}</Text>
+              <Text style={styles.pts}>pts</Text>
             </View>
           </View>
+          
+          <Text style={styles.peptideName}>{item.peptide_name}</Text>
+          
           <View style={styles.itemFooter}>
-            <Text style={[styles.score, { color: tierColor }]}>
-              Score: {item.trust_score}
-            </Text>
-            <Text style={styles.date}>{formatDate(item.analysed_at)}</Text>
+            <View style={styles.riskBadge}>
+              <Text style={styles.riskText}>
+                {getRiskIcon(item.risk_level)} {item.risk_level} Risk
+              </Text>
+            </View>
+            <Text style={styles.time}>{formatTime(item.analysed_at)}</Text>
           </View>
         </View>
+        
+        {!selectionMode && <Text style={styles.chevron}>›</Text>}
       </TouchableOpacity>
     );
   };
 
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.container} edges={['bottom']}>
+        <View style={styles.emptyState}>
+          <Text style={styles.emptyIcon}>📋</Text>
+          <Text style={styles.emptyTitle}>Loading...</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
   if (history.length === 0) {
     return (
-      <View style={styles.emptyContainer}>
-        <Text style={styles.emptyIcon}>📋</Text>
-        <Text style={styles.emptyTitle}>No analyses yet</Text>
-        <Text style={styles.emptyText}>
-          Paste a vendor URL to get started.
-        </Text>
-        <Text style={styles.disclaimer}>{DISCLAIMER}</Text>
-      </View>
+      <SafeAreaView style={styles.container} edges={['bottom']}>
+        <View style={styles.emptyState}>
+          <Text style={styles.emptyIcon}>📋</Text>
+          <Text style={styles.emptyTitle}>No History Yet</Text>
+          <Text style={styles.emptySubtitle}>
+            Your analysed vendors will appear here
+          </Text>
+        </View>
+      </SafeAreaView>
     );
   }
 
   return (
-    <View style={styles.container}>
-      {/* Compare Mode Header */}
-      <View style={styles.modeHeader}>
-        <TouchableOpacity 
-          style={[styles.compareToggle, selectionMode && styles.compareToggleActive]}
-          onPress={toggleSelectionMode}
-        >
-          <Text style={[styles.compareToggleText, selectionMode && styles.compareToggleTextActive]}>
-            {selectionMode ? 'Cancel' : '⚖️ Compare'}
-          </Text>
-        </TouchableOpacity>
-        {selectionMode && (
-          <Text style={styles.selectionHint}>
-            Select 2-3 vendors ({selectedItems.size} selected)
-          </Text>
-        )}
+    <SafeAreaView style={styles.container} edges={['bottom']}>
+      {/* Search Bar */}
+      <View style={styles.searchContainer}>
+        <TextInput
+          style={styles.searchInput}
+          placeholder="Search brands or peptides..."
+          placeholderTextColor={COLORS.textTertiary}
+          value={searchQuery}
+          onChangeText={setSearchQuery}
+        />
       </View>
 
+      {/* Peptide Filter */}
+      {peptides.length > 0 && (
+        <View style={styles.filterContainer}>
+          <TouchableOpacity
+            style={[styles.filterPill, !selectedPeptide && styles.filterPillActive]}
+            onPress={() => setSelectedPeptide(null)}
+          >
+            <Text style={[styles.filterText, !selectedPeptide && styles.filterTextActive]}>
+              All
+            </Text>
+          </TouchableOpacity>
+          {peptides.map(peptide => (
+            <TouchableOpacity
+              key={peptide}
+              style={[styles.filterPill, selectedPeptide === peptide && styles.filterPillActive]}
+              onPress={() => setSelectedPeptide(selectedPeptide === peptide ? null : peptide)}
+            >
+              <Text style={[styles.filterText, selectedPeptide === peptide && styles.filterTextActive]}>
+                {peptide}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      )}
+
+      {/* Selection Mode Header */}
+      {selectionMode && (
+        <View style={styles.selectionHeader}>
+          <TouchableOpacity onPress={() => {
+            setSelectionMode(false);
+            setSelectedItems(new Set());
+          }}>
+            <Text style={styles.cancelText}>Cancel</Text>
+          </TouchableOpacity>
+          <Text style={styles.selectedCount}>
+            {selectedItems.size} selected
+          </Text>
+          <TouchableOpacity
+            style={[styles.compareButton, selectedItems.size < 2 && styles.compareButtonDisabled]}
+            onPress={handleCompare}
+            disabled={selectedItems.size < 2}
+          >
+            <Text style={styles.compareButtonText}>Compare</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {/* History List */}
       <FlatList
-        data={history}
+        data={filteredHistory}
         renderItem={renderItem}
-        keyExtractor={(item) => item.id}
+        keyExtractor={item => item.id}
         contentContainerStyle={styles.listContent}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
             onRefresh={onRefresh}
-            tintColor="#94a3b8"
+            tintColor={COLORS.accent}
           />
         }
-        ListFooterComponent={
-          <Text style={styles.disclaimer}>{DISCLAIMER}</Text>
+        ListEmptyComponent={
+          <View style={styles.emptyState}>
+            <Text style={styles.emptyTitle}>No Results</Text>
+            <Text style={styles.emptySubtitle}>
+              Try adjusting your filters
+            </Text>
+          </View>
         }
       />
 
-      {/* Compare Now Button */}
-      {selectionMode && selectedItems.size >= 2 && (
-        <View style={styles.compareButtonContainer}>
-          <TouchableOpacity 
-            style={styles.compareButton}
-            onPress={handleCompareNow}
+      {/* Compare Button (when not in selection mode) */}
+      {!selectionMode && filteredHistory.length >= 2 && (
+        <View style={styles.bottomBar}>
+          <TouchableOpacity
+            style={styles.startCompareButton}
+            onPress={() => setSelectionMode(true)}
           >
-            <Text style={styles.compareButtonText}>
-              Compare Now ({selectedItems.size})
+            <Text style={styles.startCompareText}>
+              Select to Compare
+            </Text>
+            <Text style={styles.startCompareHint}>
+              Long-press any item or tap here
             </Text>
           </TouchableOpacity>
         </View>
       )}
-    </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0f172a',
+    backgroundColor: COLORS.bgPrimary,
   },
-  modeHeader: {
-    padding: 16,
+  searchContainer: {
+    paddingHorizontal: 20,
+    paddingTop: 16,
     paddingBottom: 8,
+  },
+  searchInput: {
+    backgroundColor: COLORS.bgTertiary,
+    borderRadius: 12,
+    padding: 12,
+    fontSize: 15,
+    color: COLORS.textPrimary,
+    borderWidth: 1,
+    borderColor: COLORS.surface,
+  },
+  filterContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    paddingHorizontal: 20,
+    paddingBottom: 12,
+    gap: 8,
+  },
+  filterPill: {
+    backgroundColor: COLORS.bgSecondary,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: COLORS.surface,
+  },
+  filterPillActive: {
+    backgroundColor: COLORS.accent + '20',
+    borderColor: COLORS.accent,
+  },
+  filterText: {
+    fontSize: 13,
+    color: COLORS.textSecondary,
+    fontWeight: '500',
+  },
+  filterTextActive: {
+    color: COLORS.accent,
+  },
+  selectionHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    backgroundColor: COLORS.bgSecondary,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.surface,
   },
-  compareToggle: {
+  cancelText: {
+    fontSize: 15,
+    color: COLORS.textSecondary,
+  },
+  selectedCount: {
+    fontSize: 15,
+    color: COLORS.textPrimary,
+    fontWeight: '500',
+  },
+  compareButton: {
+    backgroundColor: COLORS.accent,
     paddingHorizontal: 16,
     paddingVertical: 8,
-    borderRadius: 20,
-    backgroundColor: '#1e293b',
-    borderWidth: 1,
-    borderColor: '#334155',
+    borderRadius: 16,
   },
-  compareToggleActive: {
-    backgroundColor: '#3b82f6',
-    borderColor: '#3b82f6',
+  compareButtonDisabled: {
+    opacity: 0.5,
   },
-  compareToggleText: {
-    color: '#94a3b8',
+  compareButtonText: {
     fontSize: 14,
+    color: COLORS.textPrimary,
     fontWeight: '600',
   },
-  compareToggleTextActive: {
-    color: '#ffffff',
-  },
-  selectionHint: {
-    color: '#64748b',
-    fontSize: 12,
-  },
   listContent: {
-    padding: 16,
-    paddingTop: 8,
+    padding: 20,
+    paddingBottom: 100,
   },
   historyItem: {
-    backgroundColor: '#1e293b',
+    backgroundColor: COLORS.bgSecondary,
     borderRadius: 12,
     padding: 16,
     marginBottom: 12,
     flexDirection: 'row',
     alignItems: 'center',
   },
-  historyItemSelectable: {
-    borderWidth: 2,
-    borderColor: 'transparent',
-  },
   historyItemSelected: {
-    borderColor: '#3b82f6',
-    backgroundColor: '#1e3a5f',
+    backgroundColor: COLORS.accent + '15',
+    borderWidth: 1,
+    borderColor: COLORS.accent,
   },
   checkbox: {
     width: 24,
     height: 24,
     borderRadius: 12,
     borderWidth: 2,
-    borderColor: '#64748b',
+    borderColor: COLORS.surface,
     marginRight: 12,
     alignItems: 'center',
     justifyContent: 'center',
   },
   checkboxSelected: {
-    backgroundColor: '#3b82f6',
-    borderColor: '#3b82f6',
+    backgroundColor: COLORS.accent,
+    borderColor: COLORS.accent,
   },
   checkmark: {
-    color: '#ffffff',
+    color: COLORS.textPrimary,
     fontSize: 14,
     fontWeight: 'bold',
   },
@@ -273,43 +469,89 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 8,
+    marginBottom: 4,
   },
-  domain: {
+  brandName: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#e2e8f0',
+    color: COLORS.textPrimary,
     flex: 1,
     marginRight: 12,
   },
-  tierBadge: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 12,
+  scoreContainer: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: 2,
   },
-  tierText: {
-    color: '#ffffff',
-    fontSize: 12,
-    fontWeight: '600',
+  score: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    fontVariant: ['tabular-nums'],
+  },
+  pts: {
+    fontSize: 11,
+    color: COLORS.textTertiary,
+  },
+  peptideName: {
+    fontSize: 14,
+    color: COLORS.textSecondary,
+    marginBottom: 8,
   },
   itemFooter: {
     flexDirection: 'row',
+    alignItems: 'center',
     justifyContent: 'space-between',
+  },
+  riskBadge: {
+    flexDirection: 'row',
     alignItems: 'center',
   },
-  score: {
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  date: {
+  riskText: {
     fontSize: 12,
-    color: '#64748b',
+    color: COLORS.textSecondary,
   },
-  emptyContainer: {
-    flex: 1,
-    backgroundColor: '#0f172a',
-    justifyContent: 'center',
+  time: {
+    fontSize: 12,
+    color: COLORS.textTertiary,
+  },
+  chevron: {
+    fontSize: 24,
+    color: COLORS.textTertiary,
+    marginLeft: 8,
+  },
+  bottomBar: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: COLORS.bgSecondary,
+    padding: 20,
+    borderTopWidth: 1,
+    borderTopColor: COLORS.surface,
+  },
+  startCompareButton: {
+    backgroundColor: COLORS.bgTertiary,
+    borderRadius: 12,
+    padding: 16,
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: COLORS.surface,
+    borderStyle: 'dashed',
+  },
+  startCompareText: {
+    fontSize: 15,
+    color: COLORS.textPrimary,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  startCompareHint: {
+    fontSize: 12,
+    color: COLORS.textTertiary,
+  },
+  emptyState: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
     padding: 40,
   },
   emptyIcon: {
@@ -319,41 +561,12 @@ const styles = StyleSheet.create({
   emptyTitle: {
     fontSize: 20,
     fontWeight: '600',
-    color: '#e2e8f0',
+    color: COLORS.textPrimary,
     marginBottom: 8,
   },
-  emptyText: {
+  emptySubtitle: {
     fontSize: 14,
-    color: '#94a3b8',
+    color: COLORS.textSecondary,
     textAlign: 'center',
-    marginBottom: 40,
-  },
-  disclaimer: {
-    fontSize: 11,
-    color: '#64748b',
-    textAlign: 'center',
-    lineHeight: 16,
-    paddingVertical: 20,
-  },
-  compareButtonContainer: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    padding: 16,
-    backgroundColor: '#0f172a',
-    borderTopWidth: 1,
-    borderTopColor: '#334155',
-  },
-  compareButton: {
-    backgroundColor: '#3b82f6',
-    padding: 16,
-    borderRadius: 12,
-    alignItems: 'center',
-  },
-  compareButtonText: {
-    color: '#ffffff',
-    fontSize: 18,
-    fontWeight: '600',
   },
 });
