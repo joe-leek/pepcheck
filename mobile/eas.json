@@ -1,0 +1,23 @@
+{
+  "cli": {
+    "version": ">= 5.0.0",
+    "appVersionSource": "local"
+  },
+  "build": {
+    "simulator": {
+      "ios": {
+        "simulator": true
+      }
+    },
+    "production": {
+      "distribution": "store"
+    }
+  },
+  "submit": {
+    "production": {
+      "ios": {
+        "appleId": "joe.leek23@gmail.com"
+      }
+    }
+  }
+}
