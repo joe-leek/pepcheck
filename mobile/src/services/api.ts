@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AnalysisResult, HistoryItem, RiskLevel } from '../types';
 
-const API_BASE = 'http://192.168.1.100:8000'; // Update to your server IP
+const API_BASE = 'https://pepcheck-api.pepcheck.app';
 
 export async function analyseVendor(url: string): Promise<AnalysisResult> {
   const response = await fetch(`${API_BASE}/analyse`, {
